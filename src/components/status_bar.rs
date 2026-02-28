@@ -4,18 +4,22 @@ use {
         app_context::AppContext,
         components::component_traits::{Component, HandleFocus},
         event::Event,
+        modal::Mode,
     },
     ratatui::{
-        layout::{Alignment, Rect},
+        layout::{Alignment, Constraint, Direction, Layout, Rect},
+        style::{Color, Modifier, Style},
         text::{Line, Span},
-        widgets::{Block, Borders, Paragraph, Wrap},
+        widgets::Paragraph,
     },
     std::sync::Arc,
     tokio::sync::mpsc::UnboundedSender,
 };
 
-/// `StatusBar` is a struct that represents a status bar.
-/// It is responsible for managing the layout and rendering of the status bar.
+/// `StatusBar` is a Helix-style status bar showing:
+/// - Mode indicator (NOR / VIS / INS / SPC / PKR) on the left
+/// - Chat name + status info in the middle
+/// - Unread count + notifications on the right
 pub struct StatusBar {
     /// The application configuration.
     app_context: Arc<AppContext>,
@@ -32,60 +36,63 @@ pub struct StatusBar {
     /// Optional short status message (e.g. "Message yanked"); cleared on next key press.
     status_message: Option<String>,
 }
-/// Implementation of `StatusBar` struct.
+
 impl StatusBar {
     /// Create a new instance of the `StatusBar` struct.
-    ///
-    /// # Arguments
-    /// * `app_context` - An Arc wrapped AppContext struct.
-    ///
-    /// # Returns
-    /// * `Self` - The new instance of the `StatusBar` struct.
     pub fn new(app_context: Arc<AppContext>) -> Self {
-        let command_tx = None;
-        let name = "".to_string();
-        let terminal_area = Rect::default();
-        let last_key = Event::Unknown;
-        let focused = false;
-        let status_message = None;
-
         StatusBar {
             app_context,
-            command_tx,
-            name,
-            terminal_area,
-            last_key,
-            focused,
-            status_message,
+            command_tx: None,
+            name: "".to_string(),
+            terminal_area: Rect::default(),
+            last_key: Event::Unknown,
+            focused: false,
+            status_message: None,
         }
     }
+
     /// Set the name of the `StatusBar`.
-    ///
-    /// # Arguments
-    /// * `name` - The name of the `StatusBar`.
-    ///
-    /// # Returns
-    /// * `Self` - The modified instance of the `StatusBar`.
     pub fn with_name(mut self, name: impl AsRef<str>) -> Self {
         self.name = name.as_ref().to_string();
         self
     }
+
+    /// Get the style for the mode indicator based on the current mode.
+    fn mode_style(mode: Mode) -> Style {
+        match mode {
+            Mode::Normal => Style::default()
+                .fg(Color::Black)
+                .bg(Color::Blue)
+                .add_modifier(Modifier::BOLD),
+            Mode::Visual => Style::default()
+                .fg(Color::Black)
+                .bg(Color::Magenta)
+                .add_modifier(Modifier::BOLD),
+            Mode::Insert => Style::default()
+                .fg(Color::Black)
+                .bg(Color::Green)
+                .add_modifier(Modifier::BOLD),
+            Mode::Space => Style::default()
+                .fg(Color::Black)
+                .bg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+            Mode::Picker => Style::default()
+                .fg(Color::Black)
+                .bg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        }
+    }
 }
 
-/// Implement the `HandleFocus` trait for the `StatusBar` struct.
-/// This trait allows the `StatusBar` to be focused or unfocused.
 impl HandleFocus for StatusBar {
-    /// Set the `focused` flag for the `StatusBar`.
     fn focus(&mut self) {
         self.focused = true;
     }
-    /// Set the `focused` flag for the `StatusBar`.
     fn unfocus(&mut self) {
         self.focused = false;
     }
 }
 
-/// Implement the `Component` trait for the `ChatListWindow` struct.
 impl Component for StatusBar {
     fn register_action_handler(&mut self, tx: UnboundedSender<Action>) -> std::io::Result<()> {
         self.command_tx = Some(tx);
@@ -109,83 +116,78 @@ impl Component for StatusBar {
     }
 
     fn draw(&mut self, frame: &mut ratatui::Frame<'_>, area: Rect) -> std::io::Result<()> {
+        let mode = self.app_context.current_mode();
+
+        // Get chat info
         let selected_chat = self
             .app_context
             .tg_context()
             .name_of_open_chat_id()
             .unwrap_or_default();
-        let mut spans: Vec<Span<'_>> = vec![
-            Span::styled(
-                "Press ",
-                self.app_context.style_status_bar_message_quit_text(),
-            ),
-            Span::styled("q ", self.app_context.style_status_bar_message_quit_key()),
-            Span::styled("or ", self.app_context.style_status_bar_message_quit_text()),
-            Span::styled(
-                "ctrl+c ",
-                self.app_context.style_status_bar_message_quit_key(),
-            ),
-            Span::styled(
-                "to quit",
-                self.app_context.style_status_bar_message_quit_text(),
-            ),
-            Span::raw("     "),
-            Span::styled(
-                "Help: ",
-                self.app_context.style_status_bar_message_quit_text(),
-            ),
-            Span::styled(
-                "alt+F1",
-                self.app_context.style_status_bar_message_quit_key(),
-            ),
-            Span::raw("     "),
-            Span::styled(
-                "Open chat: ",
-                self.app_context.style_status_bar_open_chat_text(),
-            ),
-            Span::styled(
+
+        // Build the left section: mode indicator
+        let mode_str = format!(" {} ", mode);
+        let mode_style = Self::mode_style(mode);
+
+        // Build the middle section: chat name + status message
+        let mut middle_spans: Vec<Span<'_>> = vec![Span::raw("  ")];
+        if !selected_chat.is_empty() {
+            middle_spans.push(Span::styled(
                 selected_chat,
                 self.app_context.style_status_bar_open_chat_name(),
-            ),
-            Span::raw("     "),
-            Span::styled(
-                "Key pressed: ",
-                self.app_context.style_status_bar_press_key_text(),
-            ),
-            Span::styled(
-                self.last_key.to_string(),
-                self.app_context.style_status_bar_press_key_key(),
-            ),
-            Span::raw("     "),
-        ];
+            ));
+        }
         if let Some(ref msg) = self.status_message {
-            spans.push(Span::styled(
+            middle_spans.push(Span::raw("  "));
+            middle_spans.push(Span::styled(
                 msg.as_str(),
                 self.app_context.style_status_bar_message_quit_key(),
             ));
-            spans.push(Span::raw("     "));
         }
-        spans.extend([
-            Span::styled("Size: ", self.app_context.style_status_bar_size_info_text()),
-            Span::styled(
-                self.terminal_area.width.to_string(),
-                self.app_context.style_status_bar_size_info_numbers(),
-            ),
-            Span::styled(" x ", self.app_context.style_status_bar_size_info_text()),
-            Span::styled(
-                self.terminal_area.height.to_string(),
-                self.app_context.style_status_bar_size_info_numbers(),
-            ),
-        ]);
-        let text = vec![Line::from(spans)];
 
-        let paragraph = Paragraph::new(text)
-            .block(Block::new().title(self.name.as_str()).borders(Borders::ALL))
+        // Build the right section: unread count
+        let tg_context = self.app_context.tg_context();
+        let unread = tg_context.unread_messages().len();
+        let right_text = if unread > 0 {
+            format!("{} Unread msgs ", unread)
+        } else {
+            String::new()
+        };
+
+        // Lay out: mode tag (fixed) | middle (fill) | right (min)
+        let right_width = right_text.len() as u16;
+        let mode_width = mode_str.len() as u16;
+
+        let chunks = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([
+                Constraint::Length(mode_width),
+                Constraint::Fill(1),
+                Constraint::Length(right_width),
+            ])
+            .split(area);
+
+        // Render mode indicator
+        let mode_para = Paragraph::new(Span::styled(mode_str, mode_style));
+        frame.render_widget(mode_para, chunks[0]);
+
+        // Render middle
+        let middle_line = Line::from(middle_spans);
+        let middle_para = Paragraph::new(middle_line)
             .style(self.app_context.style_status_bar())
-            .alignment(Alignment::Center)
-            .wrap(Wrap { trim: true });
+            .alignment(Alignment::Left);
+        frame.render_widget(middle_para, chunks[1]);
 
-        frame.render_widget(paragraph, area);
+        // Render right
+        if !right_text.is_empty() {
+            let right_para = Paragraph::new(Span::styled(
+                right_text,
+                self.app_context.style_status_bar_size_info_text(),
+            ))
+            .style(self.app_context.style_status_bar())
+            .alignment(Alignment::Right);
+            frame.render_widget(right_para, chunks[2]);
+        }
 
         Ok(())
     }

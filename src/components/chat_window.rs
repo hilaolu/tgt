@@ -4,6 +4,7 @@ use crate::{
     component_name::ComponentName,
     components::component_traits::{Component, HandleFocus},
     event::Event,
+    modal::Mode,
     tg::message_entry::MessageEntry,
 };
 use arboard::Clipboard;
@@ -11,10 +12,7 @@ use crossterm::event::{KeyCode, MouseEventKind};
 use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::Style,
-    symbols::{
-        border::{self, Set},
-        line,
-    },
+    symbols::border,
     text::{Line, Span, Text},
     widgets::{Block, Borders, List, ListDirection, ListItem, ListState, Paragraph},
 };
@@ -164,6 +162,43 @@ impl ChatWindow {
     /// Unselect the message item in the list.
     fn unselect(&mut self) {
         self.message_list_state.select(None);
+    }
+
+    /// Scroll half a page up (towards older messages).
+    fn half_page_up(&mut self, visible_height: usize) {
+        let half = visible_height / 2;
+        for _ in 0..half {
+            self.next();
+        }
+    }
+
+    /// Scroll half a page down (towards newer messages).
+    fn half_page_down(&mut self, visible_height: usize) {
+        let half = visible_height / 2;
+        for _ in 0..half {
+            self.previous();
+        }
+    }
+
+    /// Jump to the first (oldest) message.
+    fn goto_top(&mut self) {
+        if !self.message_list.is_empty() {
+            self.message_list_state.select(Some(0));
+            // Trigger history load for older messages
+            if !self.app_context.tg_context().is_history_loading() {
+                if let Some(event_tx) = self.app_context.tg_context().event_tx().as_ref() {
+                    let _ = event_tx.send(Event::GetChatHistory);
+                }
+            }
+        }
+    }
+
+    /// Jump to the last (newest) message.
+    fn goto_bottom(&mut self) {
+        if !self.message_list.is_empty() {
+            let last = self.message_list.len() - 1;
+            self.message_list_state.select(Some(last));
+        }
     }
 
     /// Delete the selected message item in the list.
@@ -348,6 +383,7 @@ impl Component for ChatWindow {
 
     fn update(&mut self, action: Action) {
         match action {
+            // --- Legacy actions (kept for backward compat) ---
             Action::ChatWindowNext => self.next(),
             Action::ChatWindowPrevious => self.previous(),
             Action::ChatWindowUnselect => self.unselect(),
@@ -356,6 +392,15 @@ impl Component for ChatWindow {
             Action::ChatWindowCopy => self.copy_selected(),
             Action::ChatWindowEdit => self.edit_selected(),
             Action::ShowChatWindowReply => self.reply_selected(),
+
+            // --- Modal buffer cursor actions ---
+            Action::BufferCursorUp => self.next(),
+            Action::BufferCursorDown => self.previous(),
+            Action::BufferScrollHalfPageUp => self.half_page_up(20), // approximate; draw() will refine
+            Action::BufferScrollHalfPageDown => self.half_page_down(20),
+            Action::BufferGotoTop => self.goto_top(),
+            Action::BufferGotoBottom => self.goto_bottom(),
+
             Action::ShowPhotoViewer => {
                 // User pressed keybinding to view photo from selected message
                 self.view_photo_selected();
@@ -390,7 +435,6 @@ impl Component for ChatWindow {
                 if self.focused {
                     match key_code {
                         KeyCode::Char('r') if modifiers.alt => {
-                            // Alt+R: switch to ChatList search (handled by CoreWindow)
                             if let Some(tx) = self.action_tx.as_ref() {
                                 let _ = tx.send(Action::ChatListSearch);
                             }
@@ -407,17 +451,21 @@ impl Component for ChatWindow {
     }
 
     fn draw(&mut self, frame: &mut ratatui::Frame<'_>, area: Rect) -> std::io::Result<()> {
-        // Capture selection by ID before any clear, so we can restore viewport on redraw (e.g. when unfocused)
+        // Capture selection by ID before any clear, so we can restore viewport on redraw
         let selected_message_id_before = self
             .message_list_state
             .selected()
             .and_then(|idx| self.message_list.get(idx).map(|m| m.id()));
 
-        if !self.focused {
+        // In modal UI: always show cursor in Normal mode (buffer-style).
+        // Only clear selection if there's no chat open.
+        let current_mode = self.app_context.current_mode();
+        let show_cursor = matches!(current_mode, Mode::Normal | Mode::Visual);
+        if !show_cursor && !self.focused {
             self.message_list_state.select(None);
         }
 
-        // Always refresh message list from store (no local filtering; search is server-side).
+        // Always refresh message list from store
         let selected_message_id = selected_message_id_before;
         let prev_len = self.message_list.len();
         self.refresh_message_list_from_store();
@@ -459,8 +507,7 @@ impl Component for ChatWindow {
                             id
                         })
                 });
-                // When we have no valid selection (e.g. just entered chat), jump to latest by ID.
-                // When list grew and we were at bottom (selected was newest), stay at bottom.
+                // When we have no valid selection, jump to latest
                 let at_bottom = selection_restored
                     .zip(self.app_context.tg_context().newest_message_id())
                     .is_some_and(|(sel_id, newest_id)| sel_id == newest_id);
@@ -478,31 +525,21 @@ impl Component for ChatWindow {
             }
         }
 
+        // ── Layout: full-width with title header ──
         let chat_layout = Layout::default()
             .direction(Direction::Vertical)
-            .constraints([Constraint::Min(2), Constraint::Percentage(100)])
+            .constraints([Constraint::Length(3), Constraint::Fill(1)])
             .split(area);
 
-        let border = Set {
-            top_left: line::NORMAL.vertical_right,
-            top_right: line::NORMAL.vertical_left,
-            bottom_left: line::NORMAL.horizontal_up,
-            ..border::PLAIN
-        };
-        let style_border_focused = if self.focused {
-            self.app_context.style_border_component_focused()
-        } else {
-            self.app_context.style_chat()
-        };
-
-        let block = Block::new()
-            .border_set(border)
-            .border_style(style_border_focused)
-            .borders(Borders::TOP | Borders::LEFT | Borders::RIGHT)
-            .style(self.app_context.style_chat());
+        let header_area = chat_layout[0];
         let list_area = chat_layout[1];
+
+        // ── Message list block (clean borders, no sidebar joins) ──
+        let block = Block::new()
+            .border_set(border::PLAIN)
+            .borders(Borders::LEFT | Borders::RIGHT)
+            .style(self.app_context.style_chat());
         let list_inner = block.inner(list_area);
-        // Leave margin so wrapped lines and wide chars don't overflow the right edge
         let wrap_width = list_inner.width.saturating_sub(2) as i32;
 
         let reply_message_id = self.app_context.tg_context().reply_message_id().as_i64();
@@ -554,8 +591,6 @@ impl Component for ChatWindow {
                     let border_style = self.app_context.style_item_reply_target();
                     let content_with_border =
                         Self::wrap_text_with_reply_border(content, border_style, alignment, myself);
-                    // Do not apply border_style to the whole ListItem: only the │ spans
-                    // use it, so the message keeps its original formatting (name, reply-to, content).
                     ListItem::new(content_with_border)
                 } else {
                     ListItem::new(content)
@@ -569,22 +604,23 @@ impl Component for ChatWindow {
             ))));
         }
 
-        // Render from bottom to top so content sits at the bottom (above the prompt) when
-        // there are fewer messages than fit in the area. Reverse items so the list's
-        // "first" item is newest; with BottomToTop that draws at the bottom, keeping
-        // visual order: oldest at top, newest at bottom.
+        // Render from bottom to top: reverse so newest is drawn at bottom
         items.reverse();
         let item_count = items.len();
 
-        // Selection is stored as index into message_list (oldest=0). In reversed list,
-        // newest=0, oldest=len-1. Convert to list index for the widget, then back after render.
+        // Convert selection index for reversed list
         let orig_selected = self.message_list_state.selected();
         let list_selected = orig_selected.map(|i| item_count.saturating_sub(1).saturating_sub(i));
         self.message_list_state.select(list_selected);
 
-        // Use normal selection highlight so message text keeps its original formatting.
-        // Reply-target is already indicated by the │ border spans only.
-        let highlight_style = self.app_context.style_item_selected();
+        // Cursor highlight style — use distinct style for Normal vs Visual mode
+        let highlight_style = match current_mode {
+            Mode::Visual => {
+                // Visual mode: more prominent selection
+                self.app_context.style_item_selected()
+            }
+            _ => self.app_context.style_item_selected(),
+        };
         let list = List::new(items)
             .block(block)
             .style(self.app_context.style_chat())
@@ -592,17 +628,11 @@ impl Component for ChatWindow {
             .repeat_highlight_symbol(true)
             .direction(ListDirection::BottomToTop);
 
-        let border_header = Set {
-            top_left: line::NORMAL.horizontal_down,
-            bottom_left: line::NORMAL.horizontal_up,
-            ..border::PLAIN
-        };
-        let block_header = Block::new()
-            .border_set(border_header)
-            .border_style(style_border_focused)
-            .borders(Borders::TOP | Borders::LEFT | Borders::RIGHT)
-            .style(self.app_context.style_chat())
-            .title(self.name.as_str());
+        // ── Header: chat name + user status (full-width, clean) ──
+        let header_block = Block::new()
+            .border_set(border::PLAIN)
+            .borders(Borders::TOP | Borders::LEFT | Borders::RIGHT | Borders::BOTTOM)
+            .style(self.app_context.style_chat());
         let header = Paragraph::new(Line::from(vec![
             Span::styled(
                 self.app_context
@@ -617,11 +647,11 @@ impl Component for ChatWindow {
                 self.app_context.style_timestamp(),
             ),
         ]))
-        .block(block_header)
+        .block(header_block)
         .alignment(Alignment::Center);
 
-        frame.render_widget(header, chat_layout[0]);
-        frame.render_stateful_widget(list, chat_layout[1], &mut self.message_list_state);
+        frame.render_widget(header, header_area);
+        frame.render_stateful_widget(list, list_area, &mut self.message_list_state);
 
         // Restore selection to message_list index (oldest=0) for next/previous and other logic.
         let list_sel = self.message_list_state.selected();

@@ -14,8 +14,6 @@ pub enum ComponentName {
     Prompt,
     /// The reply message window.
     ReplyMessage,
-    /// The title bar.
-    TitleBar,
     /// The status bar.
     StatusBar,
     /// The command guide popup.
@@ -26,6 +24,10 @@ pub enum ComponentName {
     SearchOverlay,
     /// The photo viewer popup.
     PhotoViewer,
+    /// The Helix-style picker overlay (fuzzy chat search + preview).
+    Picker,
+    /// The space menu popup.
+    SpaceMenu,
 }
 
 impl ComponentName {
@@ -38,6 +40,8 @@ impl ComponentName {
                 | ComponentName::ThemeSelector
                 | ComponentName::SearchOverlay
                 | ComponentName::PhotoViewer
+                | ComponentName::Picker
+                | ComponentName::SpaceMenu
         )
     }
 }
@@ -49,13 +53,14 @@ impl Display for ComponentName {
             ComponentName::ChatList => write!(f, "Chat List"),
             ComponentName::Chat => write!(f, "Chat"),
             ComponentName::Prompt => write!(f, "Prompt"),
-            ComponentName::TitleBar => write!(f, "Title Bar"),
             ComponentName::StatusBar => write!(f, "Status Bar"),
             ComponentName::ReplyMessage => write!(f, "Reply Message"),
             ComponentName::CommandGuide => write!(f, "Command Guide"),
             ComponentName::ThemeSelector => write!(f, "Theme Selector"),
             ComponentName::SearchOverlay => write!(f, "Search Overlay"),
             ComponentName::PhotoViewer => write!(f, "Photo Viewer"),
+            ComponentName::Picker => write!(f, "Picker"),
+            ComponentName::SpaceMenu => write!(f, "Space Menu"),
         }
     }
 }

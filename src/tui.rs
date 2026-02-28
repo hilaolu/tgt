@@ -5,7 +5,7 @@ use crate::{
     component_name::ComponentName,
     components::{
         component_traits::Component, core_window::CoreWindow, status_bar::StatusBar,
-        title_bar::TitleBar, SMALL_AREA_HEIGHT, SMALL_AREA_WIDTH,
+        SMALL_AREA_HEIGHT, SMALL_AREA_WIDTH,
     },
     event::Event,
 };
@@ -36,12 +36,6 @@ impl Tui {
     /// * `Self` - The new instance of the `Tui` struct.
     pub fn new(app_context: Arc<AppContext>) -> Self {
         let components_iter: Vec<(ComponentName, Box<dyn Component>)> = vec![
-            (
-                ComponentName::TitleBar,
-                TitleBar::new(Arc::clone(&app_context))
-                    .with_name("Tgt")
-                    .new_boxed(),
-            ),
             (
                 ComponentName::CoreWindow,
                 CoreWindow::new(Arc::clone(&app_context))
@@ -136,19 +130,10 @@ impl Tui {
         let main_layout = Layout::new(
             Direction::Vertical,
             [
-                Constraint::Length(if self.app_context.app_config().show_title_bar {
-                    if area.height > SMALL_AREA_HEIGHT + 5 {
-                        3
-                    } else {
-                        0
-                    }
-                } else {
-                    0
-                }),
                 Constraint::Min(SMALL_AREA_HEIGHT),
                 Constraint::Length(if self.app_context.app_config().show_status_bar {
                     if area.height > SMALL_AREA_HEIGHT + 5 {
-                        3
+                        1
                     } else {
                         0
                     }
@@ -160,20 +145,12 @@ impl Tui {
         .split(area);
 
         self.components
-            .get_mut(&ComponentName::TitleBar)
-            .unwrap_or_else(|| {
-                tracing::error!("Failed to get component: {}", ComponentName::TitleBar);
-                panic!("Failed to get component: {}", ComponentName::TitleBar)
-            })
-            .draw(frame, main_layout[0])?;
-
-        self.components
             .get_mut(&ComponentName::CoreWindow)
             .unwrap_or_else(|| {
                 tracing::error!("Failed to get component: {}", ComponentName::CoreWindow);
                 panic!("Failed to get component: {}", ComponentName::CoreWindow)
             })
-            .draw(frame, main_layout[1])?;
+            .draw(frame, main_layout[0])?;
 
         self.components
             .get_mut(&ComponentName::StatusBar)
@@ -181,7 +158,7 @@ impl Tui {
                 tracing::error!("Failed to get component: {}", ComponentName::StatusBar);
                 panic!("Failed to get component: {}", ComponentName::StatusBar)
             })
-            .draw(frame, main_layout[2])?;
+            .draw(frame, main_layout[1])?;
 
         Ok(())
     }

@@ -1,5 +1,6 @@
 use crate::component_name::ComponentName;
 use crate::component_name::ComponentName::Prompt;
+use crate::modal::ModeTransition;
 use crate::{
     action::Action, app_context::AppContext, app_error::AppError,
     configs::custom::keymap_custom::ActionBinding, event::Event, tg::tg_backend::TgBackend,
@@ -188,14 +189,39 @@ async fn handle_tui_backend_events(
                 .send(Action::Resize(width, height))?;
         }
         Event::Key(key, modifiers) => {
+            // ── Modal state machine: check mode transitions first ──────────
+            let transition = {
+                let mut sm = app_context.mode_state_machine();
+                sm.handle_key(key, modifiers)
+            };
+
+            match transition {
+                ModeTransition::ModeChanged(new_mode) => {
+                    // Mode changed — dispatch SetMode action and skip keymap lookup
+                    app_context.action_tx().send(Action::SetMode(new_mode))?;
+                    app_context.mark_dirty();
+                    return Ok(());
+                }
+                ModeTransition::ConsumedWithAction(action_str) => {
+                    // State machine consumed the key and produced an action string
+                    if let Ok(action) = action_str.parse::<Action>() {
+                        app_context.action_tx().send(action)?;
+                    } else {
+                        tracing::warn!("Unknown action from state machine: {}", action_str);
+                    }
+                    app_context.mark_dirty();
+                    return Ok(());
+                }
+                ModeTransition::Stay => {
+                    // Key not consumed by state machine — fall through to keymap lookup
+                }
+            }
+
+            // ── Existing keymap lookup ─────────────────────────────────────
             let focused = app_context.focused_component();
             let keymap_config = app_context.keymap_config();
             let key_event = Event::Key(key, modifiers);
 
-            // Check if key is explicitly bound in the component-specific keymap (not merged).
-            // If not explicitly bound in component keymap, skip keymap lookup to allow typing.
-            // This allows users to type keys that are only bound in core_window by not
-            // binding them in the component-specific keymap.
             let component_keymap = match focused {
                 Some(ComponentName::ChatList) => &keymap_config.chat_list,
                 Some(ComponentName::Chat) => &keymap_config.chat,
@@ -207,13 +233,10 @@ async fn handle_tui_backend_events(
                 _ => &keymap_config.core_window,
             };
 
-            // Only check merged keymap if key is explicitly bound in component-specific keymap
-            // or if no component is focused (use core_window)
             let should_check_keymap =
                 focused.is_none() || component_keymap.contains_key(&key_event);
 
             if should_check_keymap {
-                // Check if key is bound in the merged keymap for the focused component
                 let keymap = keymap_config.get_map_of(focused);
                 if let Some(action_binding) = keymap.get(&key_event) {
                     match action_binding {
@@ -233,8 +256,7 @@ async fn handle_tui_backend_events(
                     }
                 }
             }
-            // Key not bound in keymap (or not explicitly bound in component keymap): pass through to components
-            // This allows components to handle keys directly (e.g. typing characters in prompt)
+            // Key not bound in keymap: pass through to components
             app_context
                 .action_tx()
                 .send(Action::from_key_event(key, modifiers))?;
@@ -327,6 +349,19 @@ fn action_changes_ui(action: &Action) -> bool {
             | Action::UpdateArea(_)
             | Action::GetChatHistoryNewer
             | Action::ChatHistoryAppended
+            | Action::SetMode(_)
+            | Action::OpenPickerActiveChats
+            | Action::OpenPickerAllChats
+            | Action::OpenSpaceMenu
+            | Action::CloseSpaceMenu
+            | Action::BeginVisualSelect
+            | Action::CancelVisualSelect
+            | Action::BufferCursorUp
+            | Action::BufferCursorDown
+            | Action::BufferScrollHalfPageUp
+            | Action::BufferScrollHalfPageDown
+            | Action::BufferGotoTop
+            | Action::BufferGotoBottom
     )
 }
 
@@ -689,6 +724,11 @@ pub async fn handle_app_actions(
                     let payload = crate::action::PhotoDecodedPayload(msg_id, result);
                     let _ = action_tx.send(Action::PhotoDecoded(payload));
                 });
+            }
+            Action::SetMode(mode) => {
+                // Mode transition — update state machine and mark for render
+                app_context.set_mode(*mode);
+                app_context.mark_dirty();
             }
             _ => {}
         }

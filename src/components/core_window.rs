@@ -9,8 +9,10 @@ use crate::{
         command_guide::CommandGuide,
         component_traits::{Component, HandleFocus},
         photo_viewer::PhotoViewer,
+        picker::Picker,
         prompt_window::PromptWindow,
         search_overlay::SearchOverlay,
+        space_menu::SpaceMenu,
         theme_selector::ThemeSelector,
     },
     components::{MAX_CHAT_LIST_SIZE, MAX_PROMPT_SIZE, MIN_CHAT_LIST_SIZE, MIN_PROMPT_SIZE},
@@ -61,6 +63,10 @@ pub struct CoreWindow {
     show_search_overlay: bool,
     /// Indicates whether the photo viewer should be shown.
     show_photo_viewer: bool,
+    /// Indicates whether the picker overlay should be shown.
+    show_picker: bool,
+    /// Indicates whether the space menu overlay should be shown.
+    show_space_menu: bool,
     /// Last known screen areas for focusable sections (chat list, chat, prompt) for click-to-focus.
     last_focusable_areas: HashMap<ComponentName, Rect>,
 }
@@ -123,6 +129,18 @@ impl CoreWindow {
                     .with_name(ComponentName::PhotoViewer.to_string())
                     .new_boxed(),
             ),
+            (
+                ComponentName::Picker,
+                Picker::new(Arc::clone(&app_context))
+                    .with_name(ComponentName::Picker.to_string())
+                    .new_boxed(),
+            ),
+            (
+                ComponentName::SpaceMenu,
+                SpaceMenu::new(Arc::clone(&app_context))
+                    .with_name(ComponentName::SpaceMenu.to_string())
+                    .new_boxed(),
+            ),
         ];
 
         let app_context = app_context;
@@ -159,6 +177,8 @@ impl CoreWindow {
             show_theme_selector,
             show_search_overlay,
             show_photo_viewer,
+            show_picker: false,
+            show_space_menu: false,
             last_focusable_areas,
         }
     }
@@ -226,6 +246,8 @@ impl CoreWindow {
             ComponentName::ThemeSelector => Action::HideThemeSelector,
             ComponentName::SearchOverlay => Action::CloseSearchOverlay,
             ComponentName::PhotoViewer => Action::HidePhotoViewer,
+            ComponentName::Picker => Action::SetMode(crate::modal::Mode::Normal),
+            ComponentName::SpaceMenu => Action::SetMode(crate::modal::Mode::Normal),
             _ => return, // Not a popup, nothing to do
         };
 
@@ -235,6 +257,8 @@ impl CoreWindow {
             ComponentName::ThemeSelector => self.show_theme_selector,
             ComponentName::SearchOverlay => self.show_search_overlay,
             ComponentName::PhotoViewer => self.show_photo_viewer,
+            ComponentName::Picker => self.show_picker,
+            ComponentName::SpaceMenu => self.show_space_menu,
             _ => false,
         };
 
@@ -245,6 +269,8 @@ impl CoreWindow {
                 ComponentName::ThemeSelector => self.show_theme_selector = false,
                 ComponentName::SearchOverlay => self.show_search_overlay = false,
                 ComponentName::PhotoViewer => self.show_photo_viewer = false,
+                ComponentName::Picker => self.show_picker = false,
+                ComponentName::SpaceMenu => self.show_space_menu = false,
                 _ => {}
             }
 
@@ -262,11 +288,12 @@ impl CoreWindow {
     /// # Arguments
     /// * `except` - The component name that should remain visible (if it's a popup).
     fn hide_other_popups(&mut self, except: ComponentName) {
-        // List of all popup components
         let popups = [
             ComponentName::CommandGuide,
             ComponentName::ThemeSelector,
             ComponentName::SearchOverlay,
+            ComponentName::Picker,
+            ComponentName::SpaceMenu,
         ];
 
         for popup_name in popups {
@@ -558,6 +585,51 @@ impl Component for CoreWindow {
                         .for_each(|(_, component)| component.unfocus());
                 }
             }
+            Action::OpenPickerActiveChats | Action::OpenPickerAllChats => {
+                // Hide all other popups before showing picker
+                self.hide_other_popups(ComponentName::Picker);
+
+                self.show_picker = true;
+                self.component_focused = Some(ComponentName::Picker);
+                self.app_context
+                    .set_focused_component(self.component_focused);
+                if let Some(component) = self.components.get_mut(&ComponentName::Picker) {
+                    component.focus();
+                    component.update(action.clone());
+                }
+                // Unfocus other components
+                self.components
+                    .iter_mut()
+                    .filter(|(name, _)| *name != &ComponentName::Picker)
+                    .for_each(|(_, component)| component.unfocus());
+            }
+            Action::SetMode(crate::modal::Mode::Normal) => {
+                // When returning to normal mode, close any open popups
+                if self.show_picker {
+                    self.show_picker = false;
+                    if let Some(component) = self.components.get_mut(&ComponentName::Picker) {
+                        component.unfocus();
+                    }
+                }
+                if self.show_space_menu {
+                    self.show_space_menu = false;
+                    if let Some(component) = self.components.get_mut(&ComponentName::SpaceMenu) {
+                        component.unfocus();
+                    }
+                }
+                // Refocus Chat when returning to normal
+                self.component_focused = Some(ComponentName::Chat);
+                self.app_context
+                    .set_focused_component(self.component_focused);
+                self.components
+                    .get_mut(&ComponentName::Chat)
+                    .unwrap()
+                    .focus();
+                self.components
+                    .iter_mut()
+                    .filter(|(name, _)| *name != &ComponentName::Chat)
+                    .for_each(|(_, component)| component.unfocus());
+            }
             Action::SwitchTheme => {
                 // Discover available themes and find current theme index
                 let themes = discover_available_themes();
@@ -600,8 +672,28 @@ impl Component for CoreWindow {
                     tracing::error!("Failed to switch theme to {}", theme_name);
                 }
             }
+            Action::SetMode(crate::modal::Mode::Space) => {
+                // Hide all other popups
+                self.hide_other_popups(ComponentName::SpaceMenu);
+
+                self.show_space_menu = true;
+                self.component_focused = Some(ComponentName::SpaceMenu);
+                self.app_context
+                    .set_focused_component(self.component_focused);
+
+                if let Some(component) = self.components.get_mut(&ComponentName::SpaceMenu) {
+                    component.focus();
+                    component.update(action.clone());
+                }
+
+                // Unfocus other components
+                self.components
+                    .iter_mut()
+                    .filter(|(name, _)| *name != &ComponentName::SpaceMenu)
+                    .for_each(|(_, component)| component.unfocus());
+            }
             Action::Key(key_code, modifiers) => {
-                // Note: Popup components (CommandGuide, ThemeSelector, SearchOverlay) are now focusable and use keymaps.
+                // Note: Popup components (CommandGuide, ThemeSelector, SearchOverlay, SpaceMenu) are now focusable and use keymaps.
                 // Key events are routed to the focused component via the keymap system in run.rs.
                 // Send key events to focused component
                 if let Some(focused) = self.component_focused {
@@ -794,61 +886,75 @@ impl Component for CoreWindow {
     }
 
     fn draw(&mut self, frame: &mut ratatui::Frame<'_>, area: Rect) -> io::Result<()> {
-        let core_layout = Layout::default()
-            .direction(Direction::Horizontal)
+        let mode = self.app_context.current_mode();
+
+        // New Helix-style layout:
+        //  ┌──────────────────────────────────────┐
+        //  │ Chat Window (full width)              │
+        //  │                                       │
+        //  │ (reply preview, if visible)            │
+        //  │ (inline prompt, if Insert mode)        │
+        //  ├───────────────────────────────────────┤
+        //  │ NOR  user_1   ...    7 Unread msgs    │
+        //  └───────────────────────────────────────┘
+
+        // Determine prompt visibility: show only in Insert mode or when reply is active
+        let show_prompt = mode == crate::modal::Mode::Insert || self.show_reply_message;
+
+        // Status bar is always 1 line at the bottom
+        let prompt_height: u16 = if show_prompt { self.size_prompt } else { 0 };
+        let reply_height: u16 = if self.show_reply_message {
+            self.size_message_reply
+        } else {
+            0
+        };
+
+        let main_layout = Layout::default()
+            .direction(Direction::Vertical)
             .constraints([
-                Constraint::Percentage(self.size_chat_list),
-                Constraint::Percentage(100 - self.size_chat_list),
+                Constraint::Fill(1),               // Chat window
+                Constraint::Length(reply_height),  // Reply preview
+                Constraint::Length(prompt_height), // Inline prompt
             ])
             .split(area);
 
-        let sub_core_layout = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([
-                Constraint::Fill(1),
-                {
-                    if self.show_reply_message {
-                        Constraint::Length(self.size_message_reply)
-                    } else {
-                        Constraint::Length(0)
-                    }
-                },
-                Constraint::Length(self.size_prompt),
-            ])
-            .split(core_layout[1]);
+        let chat_area = main_layout[0];
+        let reply_area = main_layout[1];
+        let prompt_area = main_layout[2];
 
-        // Store areas for click-to-focus (chat list, chat window, prompt)
+        // Store focusable areas for mouse interactions
         self.last_focusable_areas
-            .insert(ComponentName::ChatList, core_layout[0]);
-        self.last_focusable_areas
-            .insert(ComponentName::Chat, sub_core_layout[0]);
-        self.last_focusable_areas
-            .insert(ComponentName::Prompt, sub_core_layout[2]);
+            .insert(ComponentName::Chat, chat_area);
+        if show_prompt {
+            self.last_focusable_areas
+                .insert(ComponentName::Prompt, prompt_area);
+        }
 
-        self.components
-            .get_mut(&ComponentName::ChatList)
-            .unwrap_or_else(|| panic!("Failed to get component: {}", ComponentName::ChatList))
-            .draw(frame, core_layout[0])?;
-
+        // Draw chat window (full width, fills most of the screen)
         self.components
             .get_mut(&ComponentName::Chat)
             .unwrap_or_else(|| panic!("Failed to get component: {}", ComponentName::Chat))
-            .draw(frame, sub_core_layout[0])?;
+            .draw(frame, chat_area)?;
 
+        // Draw reply preview if visible
         if self.show_reply_message {
             self.components
                 .get_mut(&ComponentName::ReplyMessage)
                 .unwrap_or_else(|| {
                     panic!("Failed to get component: {}", ComponentName::ReplyMessage)
                 })
-                .draw(frame, sub_core_layout[1])?;
+                .draw(frame, reply_area)?;
         }
-        self.components
-            .get_mut(&ComponentName::Prompt)
-            .unwrap_or_else(|| panic!("Failed to get component: {}", ComponentName::Prompt))
-            .draw(frame, sub_core_layout[2])?;
 
-        // Draw command guide popup if visible (draws on top of everything)
+        // Draw inline prompt (only in Insert mode or when reply is active)
+        if show_prompt {
+            self.components
+                .get_mut(&ComponentName::Prompt)
+                .unwrap_or_else(|| panic!("Failed to get component: {}", ComponentName::Prompt))
+                .draw(frame, prompt_area)?;
+        }
+
+        // Draw overlay popups on top of everything
         if self.show_command_guide {
             self.components
                 .get_mut(&ComponentName::CommandGuide)
@@ -882,6 +988,20 @@ impl Component for CoreWindow {
                 .unwrap_or_else(|| {
                     panic!("Failed to get component: {}", ComponentName::PhotoViewer)
                 })
+                .draw(frame, area)?;
+        }
+
+        if self.show_picker {
+            self.components
+                .get_mut(&ComponentName::Picker)
+                .unwrap_or_else(|| panic!("Failed to get component: {}", ComponentName::Picker))
+                .draw(frame, area)?;
+        }
+
+        if self.show_space_menu {
+            self.components
+                .get_mut(&ComponentName::SpaceMenu)
+                .unwrap_or_else(|| panic!("Failed to get component: {}", ComponentName::SpaceMenu))
                 .draw(frame, area)?;
         }
 

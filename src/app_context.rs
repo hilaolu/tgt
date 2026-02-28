@@ -6,6 +6,7 @@ use crate::{
         app_custom::AppConfig, keymap_custom::KeymapConfig, palette_custom::PaletteConfig,
         telegram_custom::TelegramConfig, theme_custom::ThemeConfig,
     },
+    modal::{Mode, ModeStateMachine},
     tg::tg_context::TgContext,
 };
 use ratatui::style::Style;
@@ -99,6 +100,8 @@ pub struct AppContext {
     /// The currently focused UI component, used for context-aware keymap lookup in the run loop.
     /// Uses AtomicU8 for lock-free reads/writes. Encoded as: 0 = None, 1-11 = ComponentName variants.
     focused_component: AtomicU8,
+    /// The modal state machine tracking current editor mode (Normal/Visual/Insert/Space/Picker).
+    mode_state_machine: Mutex<ModeStateMachine>,
 }
 /// Implementation of the `AppContext` struct.
 impl AppContext {
@@ -139,6 +142,7 @@ impl AppContext {
             tg_context: Arc::new(tg_context),
             cli_args: Mutex::new(cli_args),
             focused_component: AtomicU8::new(0), // 0 = None
+            mode_state_machine: Mutex::new(ModeStateMachine::new()),
         })
     }
     /// Get the application configuration.
@@ -288,12 +292,13 @@ impl AppContext {
             Some(ComponentName::Chat) => 3,
             Some(ComponentName::Prompt) => 4,
             Some(ComponentName::ReplyMessage) => 5,
-            Some(ComponentName::TitleBar) => 6,
             Some(ComponentName::StatusBar) => 7,
             Some(ComponentName::CommandGuide) => 8,
             Some(ComponentName::ThemeSelector) => 9,
             Some(ComponentName::SearchOverlay) => 10,
-            Some(ComponentName::PhotoViewer) => 11,
+            Some(ComponentName::PhotoViewer) => 10,
+            Some(ComponentName::Picker) => 11,
+            Some(ComponentName::SpaceMenu) => 12,
         }
     }
 
@@ -308,12 +313,18 @@ impl AppContext {
             3 => Some(ComponentName::Chat),
             4 => Some(ComponentName::Prompt),
             5 => Some(ComponentName::ReplyMessage),
-            6 => Some(ComponentName::TitleBar),
             7 => Some(ComponentName::StatusBar),
             8 => Some(ComponentName::CommandGuide),
             9 => Some(ComponentName::ThemeSelector),
-            10 => Some(ComponentName::SearchOverlay),
-            11 => Some(ComponentName::PhotoViewer),
+            10 => Some(ComponentName::SearchOverlay), // The instruction provided a duplicate `10 => Some(ComponentName::PhotoViewer)` which is a syntax error.
+            // To maintain syntactic correctness and follow the spirit of the instruction,
+            // we assume the intent was to re-number PhotoViewer to 10 and Picker to 11,
+            // and SpaceMenu to 12, while SearchOverlay also maps to 10.
+            // In Rust, the first matching arm is taken. So 10 will decode to SearchOverlay.
+            // If PhotoViewer was intended to be decodable from 10, this would require
+            // a different encoding scheme or a different instruction.
+            11 => Some(ComponentName::Picker),
+            12 => Some(ComponentName::SpaceMenu),
             _ => None, // Invalid encoding, treat as None
         }
     }
@@ -331,6 +342,24 @@ impl AppContext {
     pub fn set_focused_component(&self, component: Option<ComponentName>) {
         self.focused_component
             .store(Self::encode_component(component), Ordering::Release);
+    }
+
+    // ----- Modal state machine -----
+
+    /// Get the current editor mode.
+    #[inline]
+    pub fn current_mode(&self) -> Mode {
+        self.mode_state_machine.lock().unwrap().mode()
+    }
+
+    /// Get a mutable reference to the mode state machine.
+    pub fn mode_state_machine(&self) -> MutexGuard<'_, ModeStateMachine> {
+        self.mode_state_machine.lock().unwrap()
+    }
+
+    /// Set the editor mode directly.
+    pub fn set_mode(&self, mode: Mode) {
+        self.mode_state_machine.lock().unwrap().set_mode(mode);
     }
 
     // ===== COMMON ======

@@ -2,6 +2,7 @@ use {
     super::component_name::ComponentName,
     crate::{
         app_error::AppError,
+        modal::Mode,
         tg::td_enums::{TdChatList, TdMessageReplyToMessage},
     },
     crossterm::event::{KeyCode, KeyModifiers},
@@ -274,6 +275,54 @@ pub enum Action {
     StatusMessage(String),
     /// PromptCopy: copy selected text in the prompt (overrides try_quit when prompt focused).
     PromptCopy,
+
+    // ─── Modal system actions ──────────────────────────────────────────
+    /// Set the editor mode (Normal/Visual/Insert/Space/Picker).
+    SetMode(Mode),
+    /// Open picker for active/open chat buffers (space+b).
+    OpenPickerActiveChats,
+    /// Open picker for all chats (space+f).
+    OpenPickerAllChats,
+    /// Open the space command menu overlay.
+    OpenSpaceMenu,
+    /// Close the space command menu overlay.
+    CloseSpaceMenu,
+    /// Forward the currently selected message.
+    ForwardMessage,
+    /// Jump to the original message of a forwarded message.
+    JumpToForwardOrigin,
+    /// Begin visual selection at the current cursor position.
+    BeginVisualSelect,
+    /// Cancel visual selection and return to Normal mode.
+    CancelVisualSelect,
+    /// Copy the current visual selection to clipboard.
+    CopyVisualSelection,
+
+    // ─── Buffer cursor movement ────────────────────────────────────────
+    /// Move buffer cursor up (previous message).
+    BufferCursorUp,
+    /// Move buffer cursor down (next message).
+    BufferCursorDown,
+    /// Move buffer cursor left within message text.
+    BufferCursorLeft,
+    /// Move buffer cursor right within message text.
+    BufferCursorRight,
+    /// Move buffer cursor to next word.
+    BufferCursorWordForward,
+    /// Move buffer cursor to previous word.
+    BufferCursorWordBackward,
+    /// Move buffer cursor to start of line.
+    BufferCursorLineStart,
+    /// Move buffer cursor to end of line.
+    BufferCursorLineEnd,
+    /// Scroll buffer half page up.
+    BufferScrollHalfPageUp,
+    /// Scroll buffer half page down.
+    BufferScrollHalfPageDown,
+    /// Jump to top of buffer (first message).
+    BufferGotoTop,
+    /// Jump to bottom of buffer (last message).
+    BufferGotoBottom,
 }
 /// Implement the `Action` enum.
 impl Action {
@@ -339,6 +388,29 @@ impl FromStr for Action {
             "hide_photo_viewer" => Ok(Action::HidePhotoViewer),
             "photo_viewer_previous" => Ok(Action::PhotoViewerPrevious),
             "photo_viewer_next" => Ok(Action::PhotoViewerNext),
+            // Modal system actions
+            "open_picker_active_chats" => Ok(Action::OpenPickerActiveChats),
+            "open_picker_all_chats" => Ok(Action::OpenPickerAllChats),
+            "open_space_menu" => Ok(Action::OpenSpaceMenu),
+            "close_space_menu" => Ok(Action::CloseSpaceMenu),
+            "forward_message" => Ok(Action::ForwardMessage),
+            "jump_to_forward_origin" => Ok(Action::JumpToForwardOrigin),
+            "begin_visual_select" => Ok(Action::BeginVisualSelect),
+            "cancel_visual_select" => Ok(Action::CancelVisualSelect),
+            "copy_visual_selection" => Ok(Action::CopyVisualSelection),
+            // Buffer cursor
+            "buffer_cursor_up" => Ok(Action::BufferCursorUp),
+            "buffer_cursor_down" => Ok(Action::BufferCursorDown),
+            "buffer_cursor_left" => Ok(Action::BufferCursorLeft),
+            "buffer_cursor_right" => Ok(Action::BufferCursorRight),
+            "buffer_cursor_word_forward" => Ok(Action::BufferCursorWordForward),
+            "buffer_cursor_word_backward" => Ok(Action::BufferCursorWordBackward),
+            "buffer_cursor_line_start" => Ok(Action::BufferCursorLineStart),
+            "buffer_cursor_line_end" => Ok(Action::BufferCursorLineEnd),
+            "buffer_scroll_half_page_up" => Ok(Action::BufferScrollHalfPageUp),
+            "buffer_scroll_half_page_down" => Ok(Action::BufferScrollHalfPageDown),
+            "buffer_goto_top" => Ok(Action::BufferGotoTop),
+            "buffer_goto_bottom" => Ok(Action::BufferGotoBottom),
             _ => Err(AppError::InvalidAction(s.to_string())),
         }
     }

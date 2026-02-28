@@ -11,11 +11,13 @@ pub mod command_guide;
 pub mod component_traits;
 pub mod core_window;
 pub mod photo_viewer;
+pub mod picker;
 pub mod prompt_window;
 pub mod reply_message;
 pub mod search_overlay;
 #[cfg(test)]
 pub mod search_tests;
+pub mod space_menu;
 pub mod status_bar;
+
 pub mod theme_selector;
-pub mod title_bar;

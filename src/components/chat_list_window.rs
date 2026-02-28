@@ -74,6 +74,24 @@ impl ChatListEntry {
         self.last_read_outbox_message_id = Some(last_read_outbox_message_id);
     }
 
+    // -- Getters (used by Picker and other components) --
+
+    pub fn chat_id(&self) -> i64 {
+        self.chat_id
+    }
+    pub fn chat_name(&self) -> &str {
+        &self.chat_name
+    }
+    pub fn last_message(&self) -> Option<&MessageEntry> {
+        self.last_message.as_ref()
+    }
+    pub fn user(&self) -> Option<&User> {
+        self.user.as_ref()
+    }
+    pub fn unread_count(&self) -> i32 {
+        self.unread_count
+    }
+
     pub(crate) fn get_text_styled(&self, app_context: &AppContext) -> Text<'_> {
         let mut online_symbol = "";
         let mut verificated_symbol = "";
