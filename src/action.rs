@@ -155,8 +155,6 @@ pub enum Action {
     HideChatWindowReply,
     /// ShowCommandGuide action.
     ShowCommandGuide,
-    /// Open a new message draft ("o" in Normal mode)
-    OpenNewDraft,
     /// HideCommandGuide action.
     HideCommandGuide,
 
@@ -187,6 +185,9 @@ pub enum Action {
     ChatWindowCopy,
     /// ChatWindowEdit action.
     ChatWindowEdit,
+    /// ChatWindowOpenDraft action.
+    /// Opens a new empty message draft at the bottom of the chat window.
+    ChatWindowOpenDraft,
 
     /// EditMessage action with a `String`.
     /// This action is used to edit a message.
@@ -365,9 +366,9 @@ impl FromStr for Action {
             "chat_window_delete_for_me" => Ok(Action::ChatWindowDeleteForMe),
             "chat_window_copy" => Ok(Action::ChatWindowCopy),
             "chat_window_edit" => Ok(Action::ChatWindowEdit),
+            "chat_window_open_draft" => Ok(Action::ChatWindowOpenDraft),
             "chat_window_reply" => Ok(Action::ShowChatWindowReply),
             "show_command_guide" => Ok(Action::ShowCommandGuide),
-            "open_new_draft" => Ok(Action::OpenNewDraft),
             "hide_command_guide" => Ok(Action::HideCommandGuide),
             "show_theme_selector" => Ok(Action::ShowThemeSelector),
             "hide_theme_selector" => Ok(Action::HideThemeSelector),

@@ -1,8 +1,11 @@
+#[allow(unused_imports)]
 use crate::component_name::ComponentName;
 use crate::modal::ModeTransition;
+#[allow(unused_imports)]
+use crate::configs::custom::keymap_custom::ActionBinding;
 use crate::{
     action::Action, app_context::AppContext, app_error::AppError,
-    configs::custom::keymap_custom::ActionBinding, event::Event, tg::tg_backend::TgBackend,
+    event::Event, tg::tg_backend::TgBackend,
     tui::Tui, tui_backend::TuiBackend,
 };
 use ratatui::layout::Rect;
@@ -201,52 +204,20 @@ async fn handle_tui_backend_events(
                     return Ok(());
                 }
                 ModeTransition::Stay => {
-                    // Key not consumed by state machine — fall through to keymap lookup
+                    // Key not consumed by state machine — fall through
                 }
             }
 
-            // ── Existing keymap lookup ─────────────────────────────────────
-            let focused = app_context.focused_component();
-            let keymap_config = app_context.keymap_config();
-            let key_event = Event::Key(key, modifiers);
-
-            let component_keymap = match focused {
-                Some(ComponentName::ChatList) => &keymap_config.chat_list,
-                Some(ComponentName::Chat) => &keymap_config.chat,
-                Some(ComponentName::CommandGuide) => &keymap_config.command_guide,
-                Some(ComponentName::ThemeSelector) => &keymap_config.theme_selector,
-                Some(ComponentName::SearchOverlay) => &keymap_config.search_overlay,
-                Some(ComponentName::PhotoViewer) => &keymap_config.photo_viewer,
-                _ => &keymap_config.core_window,
-            };
-
-            let should_check_keymap =
-                focused.is_none() || component_keymap.contains_key(&key_event);
-
-            if should_check_keymap {
-                let keymap = keymap_config.get_map_of(focused);
-                if let Some(action_binding) = keymap.get(&key_event) {
-                    match action_binding {
-                        ActionBinding::Single { action, .. } => {
-                            app_context.action_tx().send(action.clone())?;
-                            return Ok(());
-                        }
-                        ActionBinding::Multiple(map_event_action) => {
-                            consume_until_single_action(
-                                &app_context.action_tx(),
-                                tui_backend,
-                                map_event_action.clone(),
-                            )
-                            .await;
-                            return Ok(());
-                        }
-                    }
-                }
-            }
-            // Key not bound in keymap: pass through to components
+            // ── Bypass legacy keymap: send keys directly to components ─────
+            // The modal state machine (above) handles all mode transitions.
+            // All remaining keys are forwarded as Action::Key so that
+            // components handle them contextually (inline input in Insert,
+            // buffer navigation in Normal, etc.).  The old keymap.toml
+            // bindings are intentionally bypassed here.
             app_context
                 .action_tx()
                 .send(Action::from_key_event(key, modifiers))?;
+            app_context.mark_dirty();
         }
         Event::FocusLost => app_context.action_tx().send(Action::FocusLost)?,
         Event::FocusGained => app_context.action_tx().send(Action::FocusGained)?,
@@ -272,6 +243,7 @@ async fn handle_tui_backend_events(
 /// * `action_tx` - An unbounded sender that can send actions.
 /// * `tui_backend` - A mutable reference to the `TuiBackend` struct.
 /// * `map_event_action` - A map of events to actions.
+#[allow(dead_code)]
 async fn consume_until_single_action(
     action_tx: &UnboundedSender<Action>,
     tui_backend: &mut TuiBackend,
@@ -324,12 +296,12 @@ fn action_changes_ui(action: &Action) -> bool {
             | Action::ToggleChatList
             | Action::IncreaseChatListSize
             | Action::DecreaseChatListSize
+            | Action::ChatWindowOpenDraft
             | Action::ShowChatWindowReply
             | Action::HideChatWindowReply
             | Action::EditMessage(_, _)
             | Action::ReplyMessage(_, _)
             | Action::ShowCommandGuide
-            | Action::OpenNewDraft
             | Action::HideCommandGuide
             | Action::StatusMessage(_)
             | Action::UpdateArea(_)

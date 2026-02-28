@@ -17,8 +17,8 @@ keymap = [
   { keys = ["alt+2"], command = "focus_chat", description = "Focus the chat"},
   { keys = ["alt+right"], command = "focus_chat", description = "Focus the chat"},
   # Focus the prompt
-  { keys = ["alt+3"], command = "focus_prompt", description = "Focus the prompt"},
-  { keys = ["alt+down"], command = "focus_prompt", description = "Focus the prompt"},
+  #{ keys = ["alt+3"], command = "focus_prompt", description = "Focus the prompt"},
+  #{ keys = ["alt+down"], command = "focus_prompt", description = "Focus the prompt"},
   # Unfocus the current component
   { keys = ["esc"], command = "unfocus_component", description = "Unfocus the current component"},
   { keys = ["alt+up"], command = "unfocus_component", description = "Unfocus the current component"},
@@ -29,9 +29,9 @@ keymap = [
   # Decrease the chat list size
   { keys = ["alt+h"], command = "decrease_chat_list_size", description = "Decrease the chat list size"},
   # Increase the prompt size
-  { keys = ["alt+k"], command = "increase_prompt_size", description = "Increase the prompt size"},
+  #{ keys = ["alt+k"], command = "increase_prompt_size", description = "Increase the prompt size"},
   # Decrease the prompt size
-  { keys = ["alt+j"], command = "decrease_prompt_size", description = "Decrease the prompt size"},
+  #{ keys = ["alt+j"], command = "decrease_prompt_size", description = "Decrease the prompt size"},
   # Start chat list search (when nothing is selected)
   { keys = ["alt+r"], command = "chat_list_search", description = "Start searching chats"},
   # Show command guide with keybindings
@@ -81,6 +81,8 @@ keymap = [
   { keys = ["ctrl+c"], command = "chat_window_copy", description = "Copy the selected message"},
   # Edit the selected message
   { keys = ["e"], command = "chat_window_edit", description = "Edit the selected message"},
+  # Open a new message draft
+  { keys = ["o"], command = "chat_window_open_draft", description = "Open new message draft"},
   # Reply to the selected message
   { keys = ["r"], command = "chat_window_reply", description = "Reply to the selected message"},
   # View photo message
@@ -97,7 +99,7 @@ keymap = [
 [prompt]
 keymap = [
   # Copy the selected text (overrides core_window try_quit when prompt focused)
-  { keys = ["ctrl+c"], command = "prompt_copy", description = "Copy the selected text"},
+  #{ keys = ["ctrl+c"], command = "prompt_copy", description = "Copy the selected text"},
   # Focus chat list / chat (so Alt+arrows work even if keymap lookup fails, e.g. terminal escape)
   { keys = ["alt+left"], command = "focus_chat_list", description = "Focus the chat list"},
   { keys = ["alt+right"], command = "focus_chat", description = "Focus the chat"},
