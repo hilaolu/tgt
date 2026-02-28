@@ -9,11 +9,11 @@ use crate::{
 use arboard::Clipboard;
 use crossterm::event::{KeyCode, MouseEventKind};
 use ratatui::{
-    layout::{Alignment, Constraint, Direction, Layout, Rect},
+    layout::{Alignment, Rect},
     style::Style,
     symbols::border,
     text::{Line, Span, Text},
-    widgets::{Block, Borders, List, ListDirection, ListItem, ListState, Paragraph},
+    widgets::{Block, Borders, List, ListDirection, ListItem, ListState},
 };
 use std::sync::Arc;
 use tokio::sync::mpsc::UnboundedSender;
@@ -683,14 +683,8 @@ impl Component for ChatWindow {
             }
         }
 
-        // ── Layout: full-width with title header ──
-        let chat_layout = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([Constraint::Length(3), Constraint::Fill(1)])
-            .split(area);
-
-        let header_area = chat_layout[0];
-        let list_area = chat_layout[1];
+        // ── Layout: full area for message list (header removed) ──
+        let list_area = area;
 
         // ── Message list block (clean borders, no sidebar joins) ──
         let block = Block::new()
@@ -931,29 +925,6 @@ impl Component for ChatWindow {
             .repeat_highlight_symbol(true)
             .direction(ListDirection::BottomToTop);
 
-        // ── Header: chat name + user status (full-width, clean) ──
-        let header_block = Block::new()
-            .border_set(border::PLAIN)
-            .borders(Borders::TOP | Borders::LEFT | Borders::RIGHT | Borders::BOTTOM)
-            .style(self.app_context.style_chat());
-        let header = Paragraph::new(Line::from(vec![
-            Span::styled(
-                self.app_context
-                    .tg_context()
-                    .name_of_open_chat_id()
-                    .unwrap_or_default(),
-                self.app_context.style_chat_chat_name(),
-            ),
-            Span::raw(" "),
-            Span::styled(
-                self.app_context.tg_context().open_chat_user_status(),
-                self.app_context.style_timestamp(),
-            ),
-        ]))
-        .block(header_block)
-        .alignment(Alignment::Center);
-
-        frame.render_widget(header, header_area);
         frame.render_stateful_widget(list, list_area, &mut self.message_list_state);
 
         // Restore selection to message_list index (oldest=0) for next/previous and other logic.
