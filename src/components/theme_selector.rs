@@ -193,6 +193,12 @@ impl Component for ThemeSelector {
             Action::Key(key_code, _modifiers) => {
                 if self.visible {
                     match key_code {
+                        crossterm::event::KeyCode::Esc => {
+                            self.hide();
+                            if let Some(tx) = self.action_tx.as_ref() {
+                                let _ = tx.send(Action::SetMode(crate::modal::Mode::Normal));
+                            }
+                        }
                         crossterm::event::KeyCode::Up => {
                             self.select_previous();
                         }

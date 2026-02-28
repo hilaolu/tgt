@@ -218,6 +218,7 @@ async fn handle_tui_backend_events(
                 .action_tx()
                 .send(Action::from_key_event(key, modifiers))?;
             app_context.mark_dirty();
+            return Ok(());
         }
         Event::FocusLost => app_context.action_tx().send(Action::FocusLost)?,
         Event::FocusGained => app_context.action_tx().send(Action::FocusGained)?,

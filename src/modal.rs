@@ -106,6 +106,10 @@ impl ModeStateMachine {
                 self.mode = Mode::Insert;
                 ModeTransition::ModeChanged(Mode::Insert)
             }
+            KeyCode::Char('o') => {
+                self.mode = Mode::Insert;
+                ModeTransition::ConsumedWithAction("chat_window_open_draft".to_string())
+            }
             KeyCode::Char('v') => {
                 self.mode = Mode::Visual;
                 ModeTransition::ModeChanged(Mode::Visual)
@@ -187,6 +191,10 @@ impl ModeStateMachine {
                 self.mode = Mode::Normal;
                 ModeTransition::ConsumedWithAction("jump_to_forward_origin".to_string())
             }
+            KeyCode::Char('q') => {
+                self.mode = Mode::Normal;
+                ModeTransition::ConsumedWithAction("try_quit".to_string())
+            }
             // Unknown space command — return to Normal
             _ => {
                 self.mode = Mode::Normal;
@@ -229,6 +237,17 @@ mod tests {
         let mut sm = ModeStateMachine::new();
         let result = sm.handle_key(KeyCode::Char('i'), empty_mods());
         assert_eq!(result, ModeTransition::ModeChanged(Mode::Insert));
+        assert_eq!(sm.mode(), Mode::Insert);
+    }
+
+    #[test]
+    fn test_normal_to_insert_on_o() {
+        let mut sm = ModeStateMachine::new();
+        let result = sm.handle_key(KeyCode::Char('o'), empty_mods());
+        assert_eq!(
+            result,
+            ModeTransition::ConsumedWithAction("chat_window_open_draft".to_string())
+        );
         assert_eq!(sm.mode(), Mode::Insert);
     }
 
@@ -359,6 +378,7 @@ mod tests {
             ('?', "show_command_guide"),
             ('w', "forward_message"),
             ('o', "jump_to_forward_origin"),
+            ('q', "try_quit"),
         ];
         for (key, expected_action) in commands {
             sm.set_mode(Mode::Space);

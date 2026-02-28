@@ -223,7 +223,17 @@ impl Component for PhotoViewer {
                         crossterm::event::KeyCode::Esc | crossterm::event::KeyCode::Char('q') => {
                             self.hide();
                             if let Some(tx) = self.action_tx.as_ref() {
-                                tx.send(Action::HidePhotoViewer).unwrap_or(());
+                                let _ = tx.send(Action::SetMode(crate::modal::Mode::Normal));
+                            }
+                        }
+                        crossterm::event::KeyCode::Up | crossterm::event::KeyCode::Char('k') => {
+                            if let Some(tx) = self.action_tx.as_ref() {
+                                let _ = tx.send(Action::PhotoViewerPrevious);
+                            }
+                        }
+                        crossterm::event::KeyCode::Down | crossterm::event::KeyCode::Char('j') => {
+                            if let Some(tx) = self.action_tx.as_ref() {
+                                let _ = tx.send(Action::PhotoViewerNext);
                             }
                         }
                         _ => {}

@@ -589,17 +589,34 @@ impl Component for ChatListWindow {
                         KeyCode::Esc => {
                             self.stop_search();
                         }
-                        KeyCode::Down => {
+                        KeyCode::Down | KeyCode::Char('j') => {
                             // Allow arrow key navigation in search mode
                             self.next();
                         }
-                        KeyCode::Up => {
+                        KeyCode::Up | KeyCode::Char('k') => {
                             // Allow arrow key navigation in search mode
                             self.previous();
                         }
                         KeyCode::Tab => {
                             // Allow tab navigation in search mode
                             self.next();
+                        }
+                        _ => {}
+                    }
+                } else if self.focused {
+                    // ── Normal-mode navigation (Helix/Vim style) ──
+                    match key_code {
+                        KeyCode::Char('j') | KeyCode::Down => {
+                            self.next();
+                        }
+                        KeyCode::Char('k') | KeyCode::Up => {
+                            self.previous();
+                        }
+                        KeyCode::Enter | KeyCode::Char('l') | KeyCode::Right => {
+                            self.confirm_selection();
+                        }
+                        KeyCode::Char('h') | KeyCode::Left => {
+                            self.unselect();
                         }
                         _ => {}
                     }

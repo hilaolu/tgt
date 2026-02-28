@@ -154,6 +154,15 @@ impl Component for SearchOverlay {
                     return;
                 }
                 match key_code {
+                    KeyCode::Esc => {
+                        self.hide();
+                        if let Some(tx) = self.action_tx.as_ref() {
+                            let _ = tx.send(Action::SetMode(crate::modal::Mode::Normal));
+                        }
+                    }
+                    KeyCode::Enter => {
+                        self.update(Action::SearchOverlaySubmit);
+                    }
                     KeyCode::Up => self.select_previous(),
                     KeyCode::Down => self.select_next(),
                     KeyCode::Backspace => {

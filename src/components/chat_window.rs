@@ -457,9 +457,7 @@ impl Component for ChatWindow {
                     }
                 }
             }
-            // --- Legacy actions (kept for backward compat) ---
-            Action::ChatWindowNext => self.next(),
-            Action::ChatWindowPrevious => self.previous(),
+            // --- Legacy actions (kept for non-nav compatibility) ---
             Action::ChatWindowUnselect => self.unselect(),
             Action::ChatWindowDeleteForEveryone => self.delete_selected(true),
             Action::ChatWindowDeleteForMe => self.delete_selected(false),

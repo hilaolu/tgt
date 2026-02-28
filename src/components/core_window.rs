@@ -15,11 +15,10 @@ use crate::{
         theme_selector::ThemeSelector,
     },
     components::{MAX_CHAT_LIST_SIZE, MIN_CHAT_LIST_SIZE},
-    configs::custom::keymap_custom::ActionBinding,
     event::Event,
     theme_switcher::{discover_available_themes, ThemeSwitcher},
 };
-use crossterm::event::{MouseButton, MouseEventKind};
+use crossterm::event::{KeyCode, MouseButton, MouseEventKind};
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use std::{collections::HashMap, io, sync::Arc};
 use tokio::sync::mpsc::UnboundedSender;
@@ -340,20 +339,7 @@ impl Component for CoreWindow {
             }
             return Ok(None);
         }
-        let binding = self.app_context.keymap_config();
-        let map = binding.get_map_of(self.component_focused);
-        if let Some(action_binding) = map.get(&ev) {
-            match action_binding {
-                ActionBinding::Single { action, .. } => {
-                    return Ok(Some(action.clone()));
-                }
-                ActionBinding::Multiple(_map_event_action) => {
-                    tracing::warn!("Multiple action bindings are not supported yet. They are supported only for default key bindings because there are not the app context to handle them here.");
-                    todo!();
-                }
-            }
-        }
-        Ok(Some(Action::Unknown))
+        Ok(None)
     }
 
     fn update(&mut self, action: Action) {
@@ -577,18 +563,14 @@ impl Component for CoreWindow {
             }
             Action::SetMode(crate::modal::Mode::Normal) => {
                 // When returning to normal mode, close any open popups
-                if self.show_picker {
-                    self.show_picker = false;
-                    if let Some(component) = self.components.get_mut(&ComponentName::Picker) {
-                        component.unfocus();
-                    }
-                }
-                if self.show_space_menu {
-                    self.show_space_menu = false;
-                    if let Some(component) = self.components.get_mut(&ComponentName::SpaceMenu) {
-                        component.unfocus();
-                    }
-                }
+                self.show_picker = false;
+                self.show_space_menu = false;
+                self.show_command_guide = false;
+                self.show_theme_selector = false;
+                self.show_search_overlay = false;
+                self.show_photo_viewer = false;
+                self.show_reply_message = false;
+
                 // Refocus Chat when returning to normal
                 self.component_focused = Some(ComponentName::Chat);
                 self.app_context
@@ -665,6 +647,63 @@ impl Component for CoreWindow {
                     .for_each(|(_, component)| component.unfocus());
             }
             Action::Key(key_code, modifiers) => {
+                // ── Global shortcuts (Helix-style) ──
+                if modifiers.alt {
+                    match key_code {
+                        KeyCode::Char('1') | KeyCode::Left => {
+                            self.update(Action::FocusComponent(ComponentName::ChatList));
+                            return;
+                        }
+                        KeyCode::Char('2') | KeyCode::Right => {
+                            self.update(Action::FocusComponent(ComponentName::Chat));
+                            return;
+                        }
+                        KeyCode::Char('n') => {
+                            self.update(Action::ToggleChatList);
+                            return;
+                        }
+                        KeyCode::Char('l') => {
+                            self.update(Action::IncreaseChatListSize);
+                            return;
+                        }
+                        KeyCode::Char('h') => {
+                            self.update(Action::DecreaseChatListSize);
+                            return;
+                        }
+                        KeyCode::Char('r') => {
+                            // Alt+R contextually opens search for focused component
+                            match self.component_focused {
+                                Some(ComponentName::Chat) => self.update(Action::ChatWindowSearch),
+                                _ => self.update(Action::ChatListSearch),
+                            }
+                            return;
+                        }
+                        KeyCode::Char('c') => {
+                            // Alt+C restore sort
+                            match self.component_focused {
+                                Some(ComponentName::ChatList) => {
+                                    self.update(Action::ChatListRestoreSort)
+                                }
+                                _ => self.update(Action::ChatWindowRestoreSort),
+                            }
+                            return;
+                        }
+                        KeyCode::F(1) => {
+                            self.update(Action::ShowCommandGuide);
+                            return;
+                        }
+                        KeyCode::Char('t') => {
+                            self.update(Action::ShowThemeSelector);
+                            return;
+                        }
+                        KeyCode::Char('v') => {
+                            self.update(Action::ViewPhotoMessage(0)); // 0 = use selected
+                            return;
+                        }
+                        _ => {}
+                    }
+                }
+
                 // Note: Popup components (CommandGuide, ThemeSelector, SearchOverlay, SpaceMenu) are now focusable and use keymaps.
                 // Key events are routed to the focused component via the keymap system in run.rs.
                 // Send key events to focused component
