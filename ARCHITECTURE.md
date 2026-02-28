@@ -28,9 +28,8 @@ The application is driven by a **finite state machine** (`modal.rs`) with five m
 │  ┌─────────────┬───────────────────────────────┐ │
 │  │ ChatList    │         ChatWindow            │ │
 │  │ (toggleable)│  ┌─────────────────────────┐  │ │
-│  │             │  │ Header (name + status)  │  │ │
-│  │             │  ├─────────────────────────┤  │ │
-│  │             │  │ Message List            │  │ │
+│  │             │  │ Message List (Full)     │  │ │
+│  │             │  │  • Vim buffer overlay   │  │ │
 │  │             │  │  • Normal messages      │  │ │
 │  │             │  │  • Inline edit blocks   │  │ │
 │  │             │  │  • Draft input (bottom) │  │ │
@@ -58,6 +57,25 @@ The application is driven by a **finite state machine** (`modal.rs`) with five m
 | `Picker` | `picker.rs` | Fuzzy chat search overlay (80×70% centered, `nucleo-matcher`). |
 | `SpaceMenu` | `space_menu.rs` | Command palette overlay for Space-mode actions. |
 | `CommandGuide` | `command_guide.rs` | Keybinding reference overlay. |
+
+---
+
+## Virtual Buffer System (`BufferCursor`)
+
+The ChatWindow acts as a continuous virtual Vim buffer. Instead of just selecting discrete messages, users navigate with a block cursor over the visual lines of the text.
+
+```rust
+pub struct BufferCursor {
+    pub row: usize, // Visual row in the viewport (0 = top)
+    pub col: usize, // Column within the line
+}
+```
+
+### Navigation Behavior
+
+- **h/j/k/l:** Move the terminal block cursor around the viewport.
+- **Scrolling:** When moving `j` past the bottom or `k` past the top, the viewport triggers `next()` or `previous()` and loads older/newer history dynamically.
+- **Selection Sync:** The visual `row` coordinate is mapped down via `ListState::offset` and line heights to automatically select the `MessageEntry` currently underneath the cursor.
 
 ---
 
@@ -132,6 +150,16 @@ ModeStateMachine.handle_key()
 ---
 
 ## Recent Changes (v2)
+
+### Commit: `feat(ui): add Vim buffer cursor overlay for ChatWindow`
+- Transformed `ChatWindow` into a continuous virtual Vim buffer.
+- Added `BufferCursor` to track row/col within the viewport.
+- Rendered terminal block cursor dynamically switching based on mode (`SteadyBlock` vs `SteadyBar`).
+- Visual cursor position automatically dictates the underlying selected message by computing exact line heights.
+
+### Commit: `refactor(ui): remove ChatWindow header`
+- Removed the chat name + status header from `ChatWindow` to maximize the message buffer size.
+- Rely entirely on the Helix-style `StatusBar` for context.
 
 ### Commit: `feat(ui): Unify message drafting with inline Input`
 - **Deleted** `prompt_window.rs` (–920 lines)

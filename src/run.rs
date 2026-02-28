@@ -1,6 +1,6 @@
 #[allow(unused_imports)]
 use crate::component_name::ComponentName;
-use crate::modal::ModeTransition;
+use crate::modal::{Mode, ModeTransition};
 #[allow(unused_imports)]
 use crate::configs::custom::keymap_custom::ActionBinding;
 use crate::{
@@ -698,6 +698,14 @@ pub async fn handle_app_actions(
     }
 
     if app_context.should_render() {
+        use crossterm::{cursor::SetCursorStyle, execute};
+        let mode = app_context.current_mode();
+        let cursor_style = match mode {
+            Mode::Insert => SetCursorStyle::SteadyBar,
+            _ => SetCursorStyle::SteadyBlock,
+        };
+        let _ = execute!(std::io::stderr(), cursor_style);
+
         tui_backend.terminal.draw(|f| {
             tui.draw(f, f.area()).unwrap();
         })?;

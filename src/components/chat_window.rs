@@ -62,8 +62,8 @@ pub struct ChatWindow {
     inline_input: Option<InlineInput>,
     /// Vim buffer cursor position.
     buf_cursor: BufferCursor,
-    /// Cached total line count across all messages.
-    cached_total_lines: usize,
+    /// Cached visible height of the message list area (updated each draw).
+    cached_viewport_height: usize,
 }
 /// Implementation of the `ChatWindow` struct.
 impl ChatWindow {
@@ -90,7 +90,7 @@ impl ChatWindow {
             request_jump_to_latest: false,
             inline_input: None,
             buf_cursor: BufferCursor::default(),
-            cached_total_lines: 0,
+            cached_viewport_height: 0,
         }
     }
     /// Set the name of the `ChatWindow`.
@@ -607,35 +607,25 @@ impl Component for ChatWindow {
                         _ => {}
                     }
                 } else if self.focused {
-                    // ── Normal-mode: Vim buffer cursor navigation ──
-                    let total = self.cached_total_lines;
+                    // ── Normal-mode: Vim buffer cursor (viewport-relative) ──
+                    let vp_h = self.cached_viewport_height;
                     match key_code {
-                        // j / ↓ = move cursor down one line (towards newer)
+                        // j / ↓ = move cursor down one line
                         KeyCode::Char('j') | KeyCode::Down => {
-                            if total > 0 && self.buf_cursor.row < total.saturating_sub(1) {
+                            if vp_h > 0 && self.buf_cursor.row < vp_h.saturating_sub(1) {
                                 self.buf_cursor.row += 1;
-                            }
-                            // Trigger newer-history load when cursor near bottom
-                            if total > 0 && self.buf_cursor.row >= total.saturating_sub(3) {
-                                if let Some(event_tx) =
-                                    self.app_context.tg_context().event_tx().as_ref()
-                                {
-                                    let _ = event_tx.send(Event::GetChatHistoryNewer);
-                                }
+                            } else {
+                                // At bottom edge: scroll list towards newer messages
+                                self.previous();
                             }
                         }
-                        // k / ↑ = move cursor up one line (towards older)
+                        // k / ↑ = move cursor up one line
                         KeyCode::Char('k') | KeyCode::Up => {
                             if self.buf_cursor.row > 0 {
                                 self.buf_cursor.row -= 1;
-                            }
-                            // Trigger older-history load when cursor near top
-                            if self.buf_cursor.row < 3 {
-                                if let Some(event_tx) =
-                                    self.app_context.tg_context().event_tx().as_ref()
-                                {
-                                    let _ = event_tx.send(Event::GetChatHistory);
-                                }
+                            } else {
+                                // At top edge: scroll list towards older messages
+                                self.next();
                             }
                         }
                         // h / ← = move cursor left
@@ -645,42 +635,52 @@ impl Component for ChatWindow {
                         // l / → = move cursor right
                         KeyCode::Char('l') | KeyCode::Right => {
                             self.buf_cursor.col += 1;
-                            // Clamping to actual line width happens in draw()
                         }
                         // G = jump to bottom (newest)
                         KeyCode::Char('G') => {
-                            if total > 0 {
-                                self.buf_cursor.row = total.saturating_sub(1);
+                            if vp_h > 0 {
+                                self.buf_cursor.row = vp_h.saturating_sub(1);
                             }
+                            self.goto_bottom();
                         }
-                        // gg would need multi-key; for now 'g' jumps to top
+                        // g = jump to top (oldest)
                         KeyCode::Char('g') => {
                             self.buf_cursor.row = 0;
-                            // Trigger older-history load
-                            if let Some(event_tx) =
-                                self.app_context.tg_context().event_tx().as_ref()
-                            {
-                                let _ = event_tx.send(Event::GetChatHistory);
-                            }
+                            self.goto_top();
                         }
                         // 0 = start of line
                         KeyCode::Char('0') => {
                             self.buf_cursor.col = 0;
                         }
-                        // $ = end of line (clamping happens in draw)
+                        // $ = end of line
                         KeyCode::Char('$') => {
                             self.buf_cursor.col = usize::MAX;
                         }
                         // Ctrl+U = half page up
                         KeyCode::Char('u') if modifiers.control => {
-                            self.buf_cursor.row =
-                                self.buf_cursor.row.saturating_sub(10);
+                            let half = vp_h / 2;
+                            if self.buf_cursor.row >= half {
+                                self.buf_cursor.row -= half;
+                            } else {
+                                let scroll_by = half - self.buf_cursor.row;
+                                self.buf_cursor.row = 0;
+                                for _ in 0..scroll_by {
+                                    self.next();
+                                }
+                            }
                         }
                         // Ctrl+D = half page down
                         KeyCode::Char('d') if modifiers.control => {
-                            if total > 0 {
-                                self.buf_cursor.row =
-                                    (self.buf_cursor.row + 10).min(total.saturating_sub(1));
+                            let half = vp_h / 2;
+                            let max_row = vp_h.saturating_sub(1);
+                            if self.buf_cursor.row + half <= max_row {
+                                self.buf_cursor.row += half;
+                            } else {
+                                let scroll_by = (self.buf_cursor.row + half).saturating_sub(max_row);
+                                self.buf_cursor.row = max_row;
+                                for _ in 0..scroll_by {
+                                    self.previous();
+                                }
                             }
                         }
                         KeyCode::Char('r') if modifiers.alt => {
@@ -785,7 +785,7 @@ impl Component for ChatWindow {
         let reply_message_id = self.app_context.tg_context().reply_message_id().as_i64();
         let mut is_unread_outbox = true;
         let mut is_unread_inbox = true;
-        let mut items: Vec<ListItem<'_>> = self
+        let (mut line_counts, mut items): (Vec<usize>, Vec<ListItem<'_>>) = self
             .message_list
             .iter()
             .map(|message_entry| {
@@ -899,21 +899,22 @@ impl Component for ChatWindow {
                 };
                 let is_reply_target =
                     reply_message_id != 0 && message_entry.id() == reply_message_id;
-                if is_reply_target {
+                let final_content = if is_reply_target {
                     let border_style = self.app_context.style_item_reply_target();
-                    let content_with_border =
-                        Self::wrap_text_with_reply_border(content, border_style, alignment, myself);
-                    ListItem::new(content_with_border)
+                    Self::wrap_text_with_reply_border(content, border_style, alignment, myself)
                 } else {
-                    ListItem::new(content)
-                }
+                    content
+                };
+                (final_content.lines.len(), ListItem::new(final_content))
             })
-            .collect();
+            .unzip();
         if self.app_context.tg_context().is_history_loading() {
-            items.push(ListItem::new(Line::from(Span::styled(
+            let loading_text = Text::from(Line::from(Span::styled(
                 "Loading…",
                 self.app_context.style_timestamp(),
-            ))));
+            )));
+            line_counts.push(loading_text.lines.len());
+            items.push(ListItem::new(loading_text));
         }
 
         // ── Render Inline Draft at Bottom ──
@@ -973,24 +974,25 @@ impl Component for ChatWindow {
                 let content = Text::from(text_lines).alignment(Alignment::Right);
 
                 let is_reply = inline.reply_to_message_id.is_some();
-                let list_item = if is_reply {
+                let final_content = if is_reply {
                     let border_style = self.app_context.style_item_reply_target();
-                    let content_with_border = Self::wrap_text_with_reply_border(
+                    Self::wrap_text_with_reply_border(
                         content,
                         border_style,
                         Alignment::Right,
                         true,
-                    );
-                    ListItem::new(content_with_border)
+                    )
                 } else {
-                    ListItem::new(content)
+                    content
                 };
-                items.push(list_item);
+                line_counts.push(final_content.lines.len());
+                items.push(ListItem::new(final_content));
             }
         }
 
         // Render from bottom to top: reverse so newest is drawn at bottom
         items.reverse();
+        line_counts.reverse();
         let item_count = items.len();
 
         // Convert selection index for reversed list
@@ -1015,10 +1017,67 @@ impl Component for ChatWindow {
 
         frame.render_stateful_widget(list, list_area, &mut self.message_list_state);
 
+        let offset = self.message_list_state.offset();
+        let mut current_y = list_inner.height as i32;
+        let mut target_index = offset;
+
+        for (i, &height) in line_counts.iter().enumerate().skip(offset) {
+            let h = height as i32;
+            current_y -= h;
+            if (self.buf_cursor.row as i32) >= current_y {
+                target_index = i;
+                break;
+            }
+            if current_y <= 0 {
+                target_index = i;
+                break;
+            }
+        }
+
+        // The target_index is in the reversed list (newest=0).
+        let original_target_idx = item_count.saturating_sub(1).saturating_sub(target_index);
+
         // Restore selection to message_list index (oldest=0) for next/previous and other logic.
         let list_sel = self.message_list_state.selected();
-        self.message_list_state
-            .select(list_sel.map(|i| item_count.saturating_sub(1).saturating_sub(i)));
+        let final_selection = list_sel.map(|i| item_count.saturating_sub(1).saturating_sub(i));
+        
+        self.message_list_state.select(final_selection);
+
+        // If in Normal/Visual mode, sync the logical selection with the visual cursor
+        let current_mode = self.app_context.current_mode();
+        if self.focused && matches!(current_mode, Mode::Normal | Mode::Visual) {
+            if self.message_list_state.selected() != Some(original_target_idx) {
+                self.message_list_state.select(Some(original_target_idx));
+                self.app_context.mark_dirty();
+            }
+        }
+
+        // ── Cache viewport height for key handler ──
+        self.cached_viewport_height = list_inner.height as usize;
+
+        // ── Render Vim buffer cursor (Normal/Visual mode) ──
+        if self.focused && matches!(current_mode, Mode::Normal | Mode::Visual) {
+            // Clamp cursor to viewport bounds
+            let max_row = list_inner.height.saturating_sub(1) as usize;
+            let max_col = list_inner.width.saturating_sub(1) as usize;
+            if self.buf_cursor.row > max_row {
+                self.buf_cursor.row = max_row;
+            }
+            if self.buf_cursor.col > max_col {
+                self.buf_cursor.col = max_col;
+            }
+            let cursor_x = list_inner.x + self.buf_cursor.col as u16;
+            let cursor_y = list_inner.y + self.buf_cursor.row as u16;
+            
+            // Highlight cursor cell as a block
+            let cursor_style = Style::default().add_modifier(ratatui::style::Modifier::REVERSED);
+            frame.buffer_mut().set_style(
+                Rect::new(cursor_x, cursor_y, 1, 1),
+                cursor_style,
+            );
+            
+            frame.set_cursor_position((cursor_x, cursor_y));
+        }
 
         Ok(())
     }
