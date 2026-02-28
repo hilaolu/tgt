@@ -145,10 +145,6 @@ pub enum Action {
     IncreaseChatListSize,
     /// Decrease ChatList size action.
     DecreaseChatListSize,
-    /// Increase Prompt size action.
-    IncreasePromptSize,
-    /// Decrease Prompt size action.
-    DecreasePromptSize,
     /// Key action with a key code.
     Key(KeyCode, Modifiers),
     /// Update area action with a rectangular area.
@@ -273,8 +269,6 @@ pub enum Action {
 
     /// StatusMessage: short message to show in the status bar (e.g. "Message yanked").
     StatusMessage(String),
-    /// PromptCopy: copy selected text in the prompt (overrides try_quit when prompt focused).
-    PromptCopy,
 
     // ─── Modal system actions ──────────────────────────────────────────
     /// Set the editor mode (Normal/Visual/Insert/Space/Picker).
@@ -350,13 +344,10 @@ impl FromStr for Action {
             "render" => Ok(Action::Render),
             "focus_chat_list" => Ok(Action::FocusComponent(ComponentName::ChatList)),
             "focus_chat" => Ok(Action::FocusComponent(ComponentName::Chat)),
-            "focus_prompt" => Ok(Action::FocusComponent(ComponentName::Prompt)),
             "unfocus_component" => Ok(Action::UnfocusComponent),
             "toggle_chat_list" => Ok(Action::ToggleChatList),
             "increase_chat_list_size" => Ok(Action::IncreaseChatListSize),
             "decrease_chat_list_size" => Ok(Action::DecreaseChatListSize),
-            "increase_prompt_size" => Ok(Action::IncreasePromptSize),
-            "decrease_prompt_size" => Ok(Action::DecreasePromptSize),
             "chat_list_next" => Ok(Action::ChatListNext),
             "chat_list_previous" => Ok(Action::ChatListPrevious),
             "chat_list_unselect" => Ok(Action::ChatListUnselect),
@@ -378,7 +369,6 @@ impl FromStr for Action {
             "show_theme_selector" => Ok(Action::ShowThemeSelector),
             "hide_theme_selector" => Ok(Action::HideThemeSelector),
             "switch_theme" => Ok(Action::SwitchTheme),
-            "prompt_copy" => Ok(Action::PromptCopy),
             "close_search_overlay" => Ok(Action::CloseSearchOverlay),
             "show_search_overlay" => Ok(Action::ShowSearchOverlay),
             "search_overlay_submit" => Ok(Action::SearchOverlaySubmit),

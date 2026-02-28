@@ -367,7 +367,6 @@ impl KeymapConfig {
             Some(componnt) => match componnt {
                 ComponentName::ChatList => &self.merged_chat_list,
                 ComponentName::Chat => &self.merged_chat,
-                ComponentName::Prompt => &self.merged_prompt,
                 ComponentName::CommandGuide => &self.merged_command_guide,
                 ComponentName::ThemeSelector => &self.merged_theme_selector,
                 ComponentName::SearchOverlay => &self.merged_search_overlay,

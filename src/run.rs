@@ -1,5 +1,4 @@
 use crate::component_name::ComponentName;
-use crate::component_name::ComponentName::Prompt;
 use crate::modal::ModeTransition;
 use crate::{
     action::Action, app_context::AppContext, app_error::AppError,
@@ -120,22 +119,11 @@ async fn handle_tg_backend_events(
                     .send(Action::DeleteMessages(message_ids, revoke))?;
             }
             Event::EditMessage(message_id, message) => {
-                // It is important to focus the prompt before editing the message.
-                // Because the actions are sent to the focused component.
-                app_context
-                    .action_tx()
-                    .send(Action::FocusComponent(Prompt))?;
-
                 app_context
                     .action_tx()
                     .send(Action::EditMessage(message_id, message))?;
             }
             Event::ReplyMessage(message_id, message) => {
-                // Reply flow is now handled by ChatWindow sending FocusComponent(Prompt) + ReplyMessage
-                // directly to action_tx when user presses R. This branch is kept for any other caller.
-                app_context
-                    .action_tx()
-                    .send(Action::FocusComponent(Prompt))?;
                 app_context
                     .action_tx()
                     .send(Action::ReplyMessage(message_id, message))?;
@@ -225,7 +213,6 @@ async fn handle_tui_backend_events(
             let component_keymap = match focused {
                 Some(ComponentName::ChatList) => &keymap_config.chat_list,
                 Some(ComponentName::Chat) => &keymap_config.chat,
-                Some(ComponentName::Prompt) => &keymap_config.prompt,
                 Some(ComponentName::CommandGuide) => &keymap_config.command_guide,
                 Some(ComponentName::ThemeSelector) => &keymap_config.theme_selector,
                 Some(ComponentName::SearchOverlay) => &keymap_config.search_overlay,
@@ -337,8 +324,6 @@ fn action_changes_ui(action: &Action) -> bool {
             | Action::ToggleChatList
             | Action::IncreaseChatListSize
             | Action::DecreaseChatListSize
-            | Action::IncreasePromptSize
-            | Action::DecreasePromptSize
             | Action::ShowChatWindowReply
             | Action::HideChatWindowReply
             | Action::EditMessage(_, _)

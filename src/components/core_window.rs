@@ -10,12 +10,11 @@ use crate::{
         component_traits::{Component, HandleFocus},
         photo_viewer::PhotoViewer,
         picker::Picker,
-        prompt_window::PromptWindow,
         search_overlay::SearchOverlay,
         space_menu::SpaceMenu,
         theme_selector::ThemeSelector,
     },
-    components::{MAX_CHAT_LIST_SIZE, MAX_PROMPT_SIZE, MIN_CHAT_LIST_SIZE, MIN_PROMPT_SIZE},
+    components::{MAX_CHAT_LIST_SIZE, MIN_CHAT_LIST_SIZE},
     configs::custom::keymap_custom::ActionBinding,
     event::Event,
     theme_switcher::{discover_available_themes, ThemeSwitcher},
@@ -41,8 +40,6 @@ pub struct CoreWindow {
     /// A flag indicating whether the `CoreWindow` should be displayed as a
     /// smaller version of itself.
     small_area: bool,
-    /// The size of the prompt component.
-    size_prompt: u16,
     /// The size of the message reply component.
     size_message_reply: u16,
     /// The size of the chat list component.
@@ -94,12 +91,6 @@ impl CoreWindow {
                     .new_boxed(),
             ),
             (
-                ComponentName::Prompt,
-                PromptWindow::new(Arc::clone(&app_context))
-                    .with_name(ComponentName::Prompt.to_string())
-                    .new_boxed(),
-            ),
-            (
                 ComponentName::ReplyMessage,
                 ReplyMessage::new(Arc::clone(&app_context))
                     .with_name(ComponentName::ReplyMessage.to_string())
@@ -148,9 +139,8 @@ impl CoreWindow {
         let action_tx = None;
         let components: HashMap<ComponentName, Box<dyn Component>> =
             components_iter.into_iter().collect();
-        let size_prompt = 3;
-        let size_message_reply = 2;
-        let size_chat_list = 20;
+        let size_message_reply = 1;
+        let size_chat_list = MAX_CHAT_LIST_SIZE;
         let small_area = false;
         let component_focused = None;
         let focused = true;
@@ -167,7 +157,6 @@ impl CoreWindow {
             action_tx,
             components,
             size_chat_list,
-            size_prompt,
             size_message_reply,
             small_area,
             component_focused,
@@ -213,12 +202,10 @@ impl CoreWindow {
         }
         self.size_chat_list += 1;
     }
-    /// Increase the size of the chat list component.
-    pub fn increase_size_prompt(&mut self) {
-        if self.size_prompt == MAX_PROMPT_SIZE {
-            return;
+    pub fn decrease_size_chat_list(&mut self) {
+        if self.size_chat_list > MIN_CHAT_LIST_SIZE {
+            self.size_chat_list -= 1;
         }
-        self.size_prompt += 1;
     }
     /// Decrease the size of the chat list component.
     pub fn decrease_chat_list_size(&mut self) {
@@ -226,13 +213,6 @@ impl CoreWindow {
             return;
         }
         self.size_chat_list -= 1;
-    }
-    /// Decrease the size of the chat list component.
-    pub fn decrease_size_prompt(&mut self) {
-        if self.size_prompt == MIN_PROMPT_SIZE {
-            return;
-        }
-        self.size_prompt -= 1;
     }
 
     /// Hide a specific popup component.
@@ -340,7 +320,7 @@ impl Component for CoreWindow {
                 for name in [
                     ComponentName::ChatList,
                     ComponentName::Chat,
-                    ComponentName::Prompt,
+                    ComponentName::ReplyMessage,
                 ] {
                     if let Some(rect) = self.last_focusable_areas.get(&name) {
                         let in_rect = col >= rect.x
@@ -420,20 +400,12 @@ impl Component for CoreWindow {
             Action::DecreaseChatListSize => {
                 self.decrease_chat_list_size();
             }
-            Action::IncreasePromptSize => {
-                self.increase_size_prompt();
-            }
-            Action::DecreasePromptSize => {
-                self.decrease_size_prompt();
-            }
             Action::TryQuit => {
-                if self.component_focused != Some(ComponentName::Prompt) {
-                    self.action_tx
-                        .as_ref()
-                        .unwrap_or_else(|| panic!("Failed to get action_tx on CoreWindow"))
-                        .send(Action::Quit)
-                        .unwrap_or_else(|_| panic!("Failed to send action Quit from CoreWindow"));
-                }
+                self.action_tx
+                    .as_ref()
+                    .unwrap_or_else(|| panic!("Failed to get action_tx on CoreWindow"))
+                    .send(Action::Quit)
+                    .unwrap_or_else(|_| panic!("Failed to send action Quit from CoreWindow"));
             }
             Action::ShowChatWindowReply => {
                 // Reply uses the prompt only (same as edit). Do not set show_reply_message.
@@ -720,7 +692,8 @@ impl Component for CoreWindow {
                     Some(ComponentName::ChatList) => true,
                     Some(ComponentName::Chat) => true,
                     Some(ComponentName::SearchOverlay) => true, // switching from overlay to ChatList search
-                    Some(ComponentName::Prompt) => false,
+                    Some(ComponentName::Picker) => false,
+                    Some(ComponentName::SpaceMenu) => false,
                     _ => false,
                 };
 
@@ -855,12 +828,6 @@ impl Component for CoreWindow {
                     }
                 }
             }
-            Action::EditMessage(..) | Action::ReplyMessage(..) => {
-                // Always dispatch to Prompt so the message is loaded regardless of focus order.
-                if let Some(component) = self.components.get_mut(&ComponentName::Prompt) {
-                    component.update(action);
-                }
-            }
             Action::LoadChats(..) | Action::ChatHistoryAppended | Action::Resize(..) => {
                 // Always forward to ChatList so it can rebuild_visible_chats (populates visible_chats).
                 if let Some(component) = self.components.get_mut(&ComponentName::ChatList) {
@@ -886,8 +853,6 @@ impl Component for CoreWindow {
     }
 
     fn draw(&mut self, frame: &mut ratatui::Frame<'_>, area: Rect) -> io::Result<()> {
-        let mode = self.app_context.current_mode();
-
         // New Helix-style layout:
         //  ┌──────────────────────────────────────┐
         //  │ Chat Window (full width)              │
@@ -899,10 +864,8 @@ impl Component for CoreWindow {
         //  └───────────────────────────────────────┘
 
         // Determine prompt visibility: show only in Insert mode or when reply is active
-        let show_prompt = mode == crate::modal::Mode::Insert || self.show_reply_message;
-
+        // Inline prompt rendering is now delegated directly to ChatWindow's draw method
         // Status bar is always 1 line at the bottom
-        let prompt_height: u16 = if show_prompt { self.size_prompt } else { 0 };
         let reply_height: u16 = if self.show_reply_message {
             self.size_message_reply
         } else {
@@ -912,23 +875,17 @@ impl Component for CoreWindow {
         let main_layout = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
-                Constraint::Fill(1),               // Chat window
-                Constraint::Length(reply_height),  // Reply preview
-                Constraint::Length(prompt_height), // Inline prompt
+                Constraint::Fill(1),              // Chat window
+                Constraint::Length(reply_height), // Reply preview
             ])
             .split(area);
 
         let chat_area = main_layout[0];
         let reply_area = main_layout[1];
-        let prompt_area = main_layout[2];
 
         // Store focusable areas for mouse interactions
         self.last_focusable_areas
             .insert(ComponentName::Chat, chat_area);
-        if show_prompt {
-            self.last_focusable_areas
-                .insert(ComponentName::Prompt, prompt_area);
-        }
 
         // Draw chat window (full width, fills most of the screen)
         self.components
@@ -944,14 +901,6 @@ impl Component for CoreWindow {
                     panic!("Failed to get component: {}", ComponentName::ReplyMessage)
                 })
                 .draw(frame, reply_area)?;
-        }
-
-        // Draw inline prompt (only in Insert mode or when reply is active)
-        if show_prompt {
-            self.components
-                .get_mut(&ComponentName::Prompt)
-                .unwrap_or_else(|| panic!("Failed to get component: {}", ComponentName::Prompt))
-                .draw(frame, prompt_area)?;
         }
 
         // Draw overlay popups on top of everything

@@ -1,7 +1,6 @@
 use crate::{
     action::Action,
     app_context::AppContext,
-    component_name::ComponentName,
     components::component_traits::{Component, HandleFocus},
     event::Event,
     modal::Mode,
@@ -18,6 +17,19 @@ use ratatui::{
 };
 use std::sync::Arc;
 use tokio::sync::mpsc::UnboundedSender;
+
+/// A standardized structure representing the current inline drafted message
+#[derive(Clone, Default, Debug)]
+pub struct InlineInput {
+    /// If Some, we are editing an existing message. If None, it's a new message.
+    pub message_id: Option<i64>,
+    /// If Some, the drafted message is a reply to this message ID.
+    pub reply_to_message_id: Option<i64>,
+    /// The drafted text.
+    pub text: String,
+    /// The cursor position.
+    pub cursor: usize,
+}
 
 /// `ChatWindow` is a struct that represents a window for displaying a chat.
 /// It is responsible for managing the layout and rendering of the chat window.
@@ -36,6 +48,8 @@ pub struct ChatWindow {
     focused: bool,
     /// When true, next draw will select the newest message (Alt+C restore order).
     request_jump_to_latest: bool,
+    /// The inline input state for drafting new messages, modifying, or replying.
+    inline_input: Option<InlineInput>,
 }
 /// Implementation of the `ChatWindow` struct.
 impl ChatWindow {
@@ -60,6 +74,7 @@ impl ChatWindow {
             message_list_state,
             focused,
             request_jump_to_latest: false,
+            inline_input: None,
         }
     }
     /// Set the name of the `ChatWindow`.
@@ -247,7 +262,7 @@ impl ChatWindow {
     }
 
     /// Edit the selected message item in the list. Only our own messages can be edited.
-    fn edit_selected(&self) {
+    fn edit_selected(&mut self) {
         let Some(selected) = self.message_list_state.selected() else {
             return;
         };
@@ -260,20 +275,30 @@ impl ChatWindow {
         }
         let message_id = entry.id();
         let message = entry.message_content_to_string();
-        if let Some(event_tx) = self.app_context.tg_context().event_tx().as_ref() {
-            let _ = event_tx.send(Event::EditMessage(message_id, message));
+        self.inline_input = Some(InlineInput {
+            message_id: Some(message_id),
+            reply_to_message_id: None,
+            text: message.clone(),
+            cursor: message.chars().count(),
+        });
+        if let Some(tx) = self.action_tx.as_ref() {
+            let _ = tx.send(Action::SetMode(Mode::Insert));
         }
     }
 
     /// Reply to the selected message item in the list.
-    /// Focuses the prompt and sets reply mode so the user can type in the same prompt used for sending/editing.
-    fn reply_selected(&self) {
+    /// Initiates a reply draft in Insert mode.
+    fn reply_selected(&mut self) {
         if let Some(selected) = self.message_list_state.selected() {
             let message_id = self.message_list[selected].id();
-            let text = self.message_list[selected].message_content_to_string();
+            self.inline_input = Some(InlineInput {
+                message_id: None,
+                reply_to_message_id: Some(message_id),
+                text: String::new(),
+                cursor: 0,
+            });
             if let Some(tx) = self.action_tx.as_ref() {
-                let _ = tx.send(Action::FocusComponent(ComponentName::Prompt));
-                let _ = tx.send(Action::ReplyMessage(message_id, text));
+                let _ = tx.send(Action::SetMode(Mode::Insert));
             }
         }
     }
@@ -383,6 +408,39 @@ impl Component for ChatWindow {
 
     fn update(&mut self, action: Action) {
         match action {
+            Action::SetMode(mode) => {
+                if mode != Mode::Insert {
+                    // When leaving insert mode, exit inline editing state
+                    self.inline_input = None;
+                } else if self.inline_input.is_none() {
+                    // Try to edit the currently selected message if it belongs to me
+                    let mut editing = false;
+                    if let Some(selected) = self.message_list_state.selected() {
+                        if let Some(entry) = self.message_list.get(selected) {
+                            if entry.sender_id() == self.app_context.tg_context().me() {
+                                let message_id = entry.id();
+                                let message = entry.message_content_to_string();
+                                self.inline_input = Some(InlineInput {
+                                    message_id: Some(message_id),
+                                    reply_to_message_id: None,
+                                    text: message.clone(),
+                                    cursor: message.chars().count(),
+                                });
+                                editing = true;
+                            }
+                        }
+                    }
+                    if !editing {
+                        // Create a draft for a new message
+                        self.inline_input = Some(InlineInput {
+                            message_id: None,
+                            reply_to_message_id: None,
+                            text: String::new(),
+                            cursor: 0,
+                        });
+                    }
+                }
+            }
             // --- Legacy actions (kept for backward compat) ---
             Action::ChatWindowNext => self.next(),
             Action::ChatWindowPrevious => self.previous(),
@@ -432,7 +490,96 @@ impl Component for ChatWindow {
                 // Handled by CoreWindow: opens search overlay or focuses ChatList
             }
             Action::Key(key_code, modifiers) => {
-                if self.focused {
+                // Intercept key events if we are editing a message inline in Insert mode
+                if let Some(inline) = self.inline_input.as_mut() {
+                    let text = &mut inline.text;
+                    let cursor = &mut inline.cursor;
+                    match key_code {
+                        KeyCode::Esc => {
+                            self.inline_input = None;
+                            if let Some(tx) = self.action_tx.as_ref() {
+                                let _ = tx.send(Action::SetMode(Mode::Normal));
+                            }
+                        }
+                        KeyCode::Enter => {
+                            let new_text = text.clone();
+                            if !new_text.trim().is_empty() {
+                                if let Some(event_tx) =
+                                    self.app_context.tg_context().event_tx().as_ref()
+                                {
+                                    if let Some(id) = inline.message_id {
+                                        let _ =
+                                            event_tx.send(Event::SendMessageEdited(id, new_text));
+                                    } else {
+                                        let reply = inline.reply_to_message_id.map(|reply_to| {
+                                            crate::tg::td_enums::TdMessageReplyToMessage {
+                                                message_id: reply_to,
+                                                chat_id: self
+                                                    .app_context
+                                                    .tg_context()
+                                                    .open_chat_id()
+                                                    .into(),
+                                            }
+                                        });
+                                        let _ = event_tx.send(Event::SendMessage(new_text, reply));
+                                    }
+                                }
+                            }
+                            self.inline_input = None;
+                            if let Some(tx) = self.action_tx.as_ref() {
+                                let _ = tx.send(Action::SetMode(Mode::Normal));
+                            }
+                        }
+                        KeyCode::Left => {
+                            *cursor = cursor.saturating_sub(1);
+                        }
+                        KeyCode::Right => {
+                            *cursor = (*cursor + 1).min(text.chars().count());
+                        }
+                        KeyCode::Backspace => {
+                            if *cursor > 0 {
+                                let chars: Vec<char> = text.chars().collect();
+                                *cursor -= 1;
+                                let mut new_text = String::new();
+                                for (i, c) in chars.iter().enumerate() {
+                                    if i != *cursor {
+                                        new_text.push(*c);
+                                    }
+                                }
+                                *text = new_text;
+                            }
+                        }
+                        KeyCode::Delete => {
+                            let chars: Vec<char> = text.chars().collect();
+                            if *cursor < chars.len() {
+                                let mut new_text = String::new();
+                                for (i, c) in chars.iter().enumerate() {
+                                    if i != *cursor {
+                                        new_text.push(*c);
+                                    }
+                                }
+                                *text = new_text;
+                            }
+                        }
+                        KeyCode::Char(c) => {
+                            // Insert character
+                            let chars: Vec<char> = text.chars().collect();
+                            let mut new_text = String::new();
+                            for (i, ch) in chars.iter().enumerate() {
+                                if i == *cursor {
+                                    new_text.push(c);
+                                }
+                                new_text.push(*ch);
+                            }
+                            if *cursor == chars.len() {
+                                new_text.push(c);
+                            }
+                            *text = new_text;
+                            *cursor += 1;
+                        }
+                        _ => {}
+                    }
+                } else if self.focused {
                     match key_code {
                         KeyCode::Char('r') if modifiers.alt => {
                             if let Some(tx) = self.action_tx.as_ref() {
@@ -575,16 +722,88 @@ impl Component for ChatWindow {
                             Alignment::Left,
                         )
                     };
-                let content = message_entry
-                    .get_text_styled(
-                        myself,
-                        &self.app_context,
-                        is_unread_outbox,
-                        name_style,
-                        content_style,
-                        wrap_width,
-                    )
-                    .alignment(alignment);
+                let content = if let Some(ref inline) = self.inline_input {
+                    if inline.message_id == Some(message_entry.id()) {
+                        let edit_text = &inline.text;
+                        let cursor = inline.cursor;
+                        // Editable text rendering
+                        let mut text_lines = Vec::new();
+                        let target_name = self
+                            .app_context
+                            .tg_context()
+                            .try_name_from_chats_or_users(self.app_context.tg_context().me())
+                            .unwrap_or_default();
+
+                        text_lines.push(Line::from(vec![
+                            Span::styled(target_name, name_style),
+                            Span::raw(" [editing]"),
+                        ]));
+
+                        let mut current_line_spans = Vec::new();
+                        let mut current_len = 0;
+
+                        // Simple char width approximation
+                        use unicode_width::UnicodeWidthChar;
+                        let cursor_style =
+                            Style::default().add_modifier(ratatui::style::Modifier::REVERSED);
+
+                        for (i, c) in edit_text.chars().enumerate() {
+                            let style = if i == cursor {
+                                cursor_style
+                            } else {
+                                content_style
+                            };
+                            let char_w = c.width().unwrap_or(1);
+
+                            if c == '\n' {
+                                text_lines
+                                    .push(Line::from(std::mem::take(&mut current_line_spans)));
+                                current_len = 0;
+                            } else {
+                                if current_len + char_w > wrap_width as usize && current_len > 0 {
+                                    text_lines
+                                        .push(Line::from(std::mem::take(&mut current_line_spans)));
+                                    current_len = 0;
+                                }
+                                current_line_spans.push(Span::styled(c.to_string(), style));
+                                current_len += char_w;
+                            }
+                        }
+                        if cursor == edit_text.chars().count() {
+                            if current_len + 1 > wrap_width as usize && current_len > 0 {
+                                text_lines
+                                    .push(Line::from(std::mem::take(&mut current_line_spans)));
+                            }
+                            current_line_spans.push(Span::styled(" ", cursor_style));
+                        }
+                        if !current_line_spans.is_empty() {
+                            text_lines.push(Line::from(current_line_spans));
+                        }
+                        Text::from(text_lines).alignment(alignment)
+                    } else {
+                        message_entry
+                            .get_text_styled(
+                                myself,
+                                &self.app_context,
+                                is_unread_outbox,
+                                name_style,
+                                content_style,
+                                wrap_width,
+                            )
+                            .alignment(alignment)
+                    }
+                } else {
+                    message_entry
+                        .get_text_styled(
+                            myself,
+                            &self.app_context,
+                            is_unread_outbox,
+                            name_style,
+                            content_style,
+                            wrap_width,
+                        )
+                        .alignment(alignment)
+                };
                 let is_reply_target =
                     reply_message_id != 0 && message_entry.id() == reply_message_id;
                 if is_reply_target {
@@ -602,6 +821,79 @@ impl Component for ChatWindow {
                 "Loading…",
                 self.app_context.style_timestamp(),
             ))));
+        }
+
+        // ── Render Inline Draft at Bottom ──
+        // (Appended before reverse, so it becomes index 0, i.e. the absolute bottom)
+        if let Some(ref inline) = self.inline_input {
+            if inline.message_id.is_none() {
+                let mut text_lines = Vec::new();
+                let target_name = self
+                    .app_context
+                    .tg_context()
+                    .try_name_from_chats_or_users(self.app_context.tg_context().me())
+                    .unwrap_or_default();
+                let name_style = self.app_context.style_chat_message_myself_name();
+                let content_style = self.app_context.style_chat_message_myself_content();
+
+                text_lines.push(Line::from(vec![
+                    Span::styled(target_name, name_style),
+                    Span::raw(" [draft]"),
+                ]));
+
+                let mut current_line_spans = Vec::new();
+                let mut current_len = 0;
+
+                use unicode_width::UnicodeWidthChar;
+                let cursor_style =
+                    Style::default().add_modifier(ratatui::style::Modifier::REVERSED);
+
+                for (i, c) in inline.text.chars().enumerate() {
+                    let style = if i == inline.cursor {
+                        cursor_style
+                    } else {
+                        content_style
+                    };
+                    let char_w = c.width().unwrap_or(1);
+
+                    if c == '\n' {
+                        text_lines.push(Line::from(std::mem::take(&mut current_line_spans)));
+                        current_len = 0;
+                    } else {
+                        if current_len + char_w > wrap_width as usize && current_len > 0 {
+                            text_lines.push(Line::from(std::mem::take(&mut current_line_spans)));
+                            current_len = 0;
+                        }
+                        current_line_spans.push(Span::styled(c.to_string(), style));
+                        current_len += char_w;
+                    }
+                }
+                if inline.cursor == inline.text.chars().count() {
+                    if current_len + 1 > wrap_width as usize && current_len > 0 {
+                        text_lines.push(Line::from(std::mem::take(&mut current_line_spans)));
+                    }
+                    current_line_spans.push(Span::styled(" ", cursor_style));
+                }
+                if !current_line_spans.is_empty() {
+                    text_lines.push(Line::from(current_line_spans));
+                }
+                let content = Text::from(text_lines).alignment(Alignment::Right);
+
+                let is_reply = inline.reply_to_message_id.is_some();
+                let list_item = if is_reply {
+                    let border_style = self.app_context.style_item_reply_target();
+                    let content_with_border = Self::wrap_text_with_reply_border(
+                        content,
+                        border_style,
+                        Alignment::Right,
+                        true,
+                    );
+                    ListItem::new(content_with_border)
+                } else {
+                    ListItem::new(content)
+                };
+                items.push(list_item);
+            }
         }
 
         // Render from bottom to top: reverse so newest is drawn at bottom

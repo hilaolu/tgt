@@ -1,7 +1,6 @@
 use crate::action::Action;
 use crate::app_context::AppContext;
 use crate::component_name::ComponentName;
-use crate::component_name::ComponentName::Prompt;
 use crate::components::component_traits::{Component, HandleFocus};
 use crate::event::Event;
 use crate::tg::message_entry::MessageEntry;
@@ -288,7 +287,7 @@ impl ChatListWindow {
                     // Same chat already open: don't clear/reload (avoids wiping messages on re-confirm).
                     self.app_context
                         .action_tx()
-                        .send(Action::FocusComponent(Prompt))
+                        .send(Action::FocusComponent(ComponentName::Chat))
                         .unwrap();
                     if let Some(event_tx) = self.app_context.tg_context().event_tx().as_ref() {
                         let _ = event_tx.send(Event::ViewAllMessages);
@@ -312,7 +311,7 @@ impl ChatListWindow {
                     .set_jump_target_message_id_i64(0);
                 self.app_context
                     .action_tx()
-                    .send(Action::FocusComponent(Prompt))
+                    .send(Action::FocusComponent(ComponentName::Chat))
                     .unwrap();
 
                 // Start loading chat history immediately (same handle_app_actions run).

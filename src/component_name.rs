@@ -10,8 +10,6 @@ pub enum ComponentName {
     ChatList,
     /// The chat.
     Chat,
-    /// The prompt.
-    Prompt,
     /// The reply message window.
     ReplyMessage,
     /// The status bar.
@@ -52,7 +50,6 @@ impl Display for ComponentName {
             ComponentName::CoreWindow => write!(f, "Core Window"),
             ComponentName::ChatList => write!(f, "Chat List"),
             ComponentName::Chat => write!(f, "Chat"),
-            ComponentName::Prompt => write!(f, "Prompt"),
             ComponentName::StatusBar => write!(f, "Status Bar"),
             ComponentName::ReplyMessage => write!(f, "Reply Message"),
             ComponentName::CommandGuide => write!(f, "Command Guide"),

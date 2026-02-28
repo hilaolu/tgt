@@ -12,7 +12,6 @@ pub mod component_traits;
 pub mod core_window;
 pub mod photo_viewer;
 pub mod picker;
-pub mod prompt_window;
 pub mod reply_message;
 pub mod search_overlay;
 #[cfg(test)]
