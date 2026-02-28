@@ -172,7 +172,7 @@ async fn handle_tui_backend_events(
         return Ok(());
     };
     match event {
-        Event::Render => app_context.mark_dirty(),
+        Event::Render => {},
         Event::Resize(width, height) => {
             app_context.mark_dirty();
             app_context

@@ -13,7 +13,6 @@ use {
     std::{
         io::{self, Stderr},
         sync::Arc,
-        time::Duration,
     },
     tokio::{
         sync::mpsc::{error::SendError, UnboundedReceiver, UnboundedSender},
@@ -217,16 +216,13 @@ impl TuiBackend {
     /// event queue for processing.
     fn start(&mut self) {
         let event_tx = self.event_tx.clone();
-        let render_delay = Duration::from_secs_f64(1.0 / self.frame_rate);
 
         self.task = tokio::spawn(async move {
             let mut reader = EventStream::new();
-            let mut render_interval = tokio::time::interval(render_delay);
 
             event_tx.send(Event::Init)?;
             loop {
                 let crossterm_event: Fuse<Next<'_, EventStream>> = reader.next().fuse();
-                let render_tick = render_interval.tick();
 
                 tokio::select! {
                     maybe_event = crossterm_event => {
@@ -258,9 +254,6 @@ impl TuiBackend {
                           },
                           _ => unimplemented!()
                         }
-                    },
-                    _ = render_tick => {
-                        event_tx.send(Event::Render)?;
                     }
                 }
             }
