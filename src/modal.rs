@@ -110,6 +110,10 @@ impl ModeStateMachine {
                 self.mode = Mode::Visual;
                 ModeTransition::ModeChanged(Mode::Visual)
             }
+            KeyCode::Char('o') => {
+                self.mode = Mode::Insert;
+                ModeTransition::ConsumedWithAction("open_new_draft".to_string())
+            }
             KeyCode::Char(' ') => {
                 self.mode = Mode::Space;
                 ModeTransition::ModeChanged(Mode::Space)

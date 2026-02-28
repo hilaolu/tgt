@@ -450,6 +450,15 @@ impl Component for ChatWindow {
             Action::ChatWindowCopy => self.copy_selected(),
             Action::ChatWindowEdit => self.edit_selected(),
             Action::ShowChatWindowReply => self.reply_selected(),
+            Action::OpenNewDraft => {
+                // Always create a fresh new-message draft
+                self.inline_input = Some(InlineInput {
+                    message_id: None,
+                    reply_to_message_id: None,
+                    text: String::new(),
+                    cursor: 0,
+                });
+            }
 
             // --- Modal buffer cursor actions ---
             Action::BufferCursorUp => self.next(),

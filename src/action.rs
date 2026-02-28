@@ -155,6 +155,8 @@ pub enum Action {
     HideChatWindowReply,
     /// ShowCommandGuide action.
     ShowCommandGuide,
+    /// Open a new message draft ("o" in Normal mode)
+    OpenNewDraft,
     /// HideCommandGuide action.
     HideCommandGuide,
 
@@ -365,6 +367,7 @@ impl FromStr for Action {
             "chat_window_edit" => Ok(Action::ChatWindowEdit),
             "chat_window_reply" => Ok(Action::ShowChatWindowReply),
             "show_command_guide" => Ok(Action::ShowCommandGuide),
+            "open_new_draft" => Ok(Action::OpenNewDraft),
             "hide_command_guide" => Ok(Action::HideCommandGuide),
             "show_theme_selector" => Ok(Action::ShowThemeSelector),
             "hide_theme_selector" => Ok(Action::HideThemeSelector),
