@@ -2,6 +2,7 @@ pub mod action;
 pub mod app_context;
 pub mod app_error;
 pub mod cli;
+pub mod clipboard;
 pub mod component_name;
 pub mod event;
 pub mod logger;

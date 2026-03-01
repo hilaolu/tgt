@@ -365,12 +365,12 @@ impl AppContext {
     pub fn set_mode(&self, mode: Mode) {
         self.mode_state_machine.lock().unwrap().set_mode(mode);
     }
-    
+
     /// Set the editor mode hint directly.
     pub fn set_mode_hint(&self, hint: String) {
         self.mode_state_machine.lock().unwrap().set_hint(hint);
     }
-    
+
     /// Clear the editor mode hint directly.
     pub fn clear_mode_hint(&self) {
         self.mode_state_machine.lock().unwrap().clear_hint();

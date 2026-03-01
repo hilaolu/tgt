@@ -1,3 +1,4 @@
+use crate::clipboard;
 use crate::{
     action::Action,
     app_context::AppContext,
@@ -6,7 +7,6 @@ use crate::{
     modal::Mode,
     tg::message_entry::MessageEntry,
 };
-use arboard::Clipboard;
 use crossterm::event::{KeyCode, MouseEventKind};
 use ratatui::{
     layout::{Alignment, Rect},
@@ -174,11 +174,12 @@ impl ChatWindow {
     /// Returns the visual row range (min, max) for a specific message by its ID,
     /// relative to the current viewport and scrolling state.
     /// Returns None if the message is not in the list.
-    fn get_message_visual_row_range(
-        &self,
-        target_message_id: i64,
-    ) -> Option<(usize, usize)> {
-        let target_reversed_idx = self.message_list.iter().rev().position(|m| m.id() == target_message_id);
+    fn get_message_visual_row_range(&self, target_message_id: i64) -> Option<(usize, usize)> {
+        let target_reversed_idx = self
+            .message_list
+            .iter()
+            .rev()
+            .position(|m| m.id() == target_message_id);
 
         if let Some(idx) = target_reversed_idx {
             let offset = self.message_list_state.offset();
@@ -225,7 +226,10 @@ impl ChatWindow {
             let target_reversed_idx = message_pos.map(|pos| rendered_items_reversed_idx + pos);
 
             // Get all visual lines for the target message
-            let is_editing_target = self.inline_input.as_ref().is_some_and(|i| i.message_id == Some(id));
+            let is_editing_target = self
+                .inline_input
+                .as_ref()
+                .is_some_and(|i| i.message_id == Some(id));
             let lines = if is_editing_target {
                 let inline = self.inline_input.as_ref().unwrap();
                 // Use the text from the inline input if currently editing this message
@@ -269,23 +273,44 @@ impl ChatWindow {
                 let is_reply = inline.reply_to_message_id.is_some();
                 if is_reply {
                     let border_style = self.app_context.style_item_reply_target();
-                    Self::wrap_text_with_reply_border(content, border_style, Alignment::Left, true).lines
+                    Self::wrap_text_with_reply_border(content, border_style, Alignment::Left, true)
+                        .lines
                 } else {
                     content.lines
                 }
             } else if let Some(message_entry) = self.message_list.iter().find(|m| m.id() == id) {
                 let myself = message_entry.sender_id() == self.app_context.tg_context().me();
-                let is_unread_outbox = myself && message_entry.id() > self.app_context.tg_context().last_read_outbox_message_id();
+                let is_unread_outbox = myself
+                    && message_entry.id()
+                        > self.app_context.tg_context().last_read_outbox_message_id();
                 let (name_style, content_style, alignment) = if myself {
-                    (self.app_context.style_chat_message_myself_name(), self.app_context.style_chat_message_myself_content(), Alignment::Right)
+                    (
+                        self.app_context.style_chat_message_myself_name(),
+                        self.app_context.style_chat_message_myself_content(),
+                        Alignment::Right,
+                    )
                 } else {
-                    (self.app_context.style_chat_message_other_name(), self.app_context.style_chat_message_other_content(), Alignment::Left)
+                    (
+                        self.app_context.style_chat_message_other_name(),
+                        self.app_context.style_chat_message_other_content(),
+                        Alignment::Left,
+                    )
                 };
-                let content = message_entry.get_text_styled(myself, &self.app_context, is_unread_outbox, name_style, content_style, wrap_width).alignment(alignment);
+                let content = message_entry
+                    .get_text_styled(
+                        myself,
+                        &self.app_context,
+                        is_unread_outbox,
+                        name_style,
+                        content_style,
+                        wrap_width,
+                    )
+                    .alignment(alignment);
                 let reply_message_id = self.app_context.tg_context().reply_message_id().as_i64();
                 if reply_message_id != 0 && id == reply_message_id {
                     let border_style = self.app_context.style_item_reply_target();
-                    Self::wrap_text_with_reply_border(content, border_style, alignment, myself).lines
+                    Self::wrap_text_with_reply_border(content, border_style, alignment, myself)
+                        .lines
                 } else {
                     content.lines
                 }
@@ -355,9 +380,7 @@ impl ChatWindow {
                 if let Some(tx) = self.action_tx.as_ref() {
                     if !selected_text.is_empty() {
                         let line_count = selected_text.lines().count();
-                        let success = Clipboard::new()
-                            .and_then(|mut c| c.set_text(selected_text).map_err(|e| e.into()))
-                            .is_ok();
+                        let success = clipboard::set_clipboard_text(&selected_text);
 
                         if success {
                             let _ = tx.send(Action::SetModeHint(format!(
@@ -370,7 +393,8 @@ impl ChatWindow {
                             ));
                         }
                     } else {
-                        let _ = tx.send(Action::SetModeHint("nothing selected to copy".to_string()));
+                        let _ =
+                            tx.send(Action::SetModeHint("nothing selected to copy".to_string()));
                     }
                 }
                 self.unselect();
@@ -575,9 +599,7 @@ impl ChatWindow {
             return;
         };
         let message = entry.message_content_to_string();
-        let success = Clipboard::new()
-            .and_then(|mut c| c.set_text(message).map_err(|e| e.into()))
-            .is_ok();
+        let success = clipboard::set_clipboard_text(&message);
 
         if let Some(tx) = self.action_tx.as_ref() {
             if success {
@@ -849,12 +871,14 @@ impl Component for ChatWindow {
                 // Handled by CoreWindow: opens search overlay or focuses ChatList
             }
             Action::PasteFromClipboard => {
-                let text = Clipboard::new().and_then(|mut c| c.get_text().map_err(|e| e.into()));
+                let text = clipboard::get_clipboard_text();
                 match text {
                     Ok(t) => self.update(Action::Paste(t)),
                     Err(_) => {
                         if let Some(tx) = self.action_tx.as_ref() {
-                            let _ = tx.send(Action::SetModeHint("failed to paste from clipboard".to_string()));
+                            let _ = tx.send(Action::SetModeHint(
+                                "failed to paste from clipboard".to_string(),
+                            ));
                             let _ = tx.send(Action::SetMode(Mode::Normal));
                         }
                     }
@@ -1044,9 +1068,7 @@ impl Component for ChatWindow {
                                 }
                                 self.goto_bottom();
                             } else if let Some(id) = self.selection_locked_message_id {
-                                if let Some((_, max_row)) =
-                                    self.get_message_visual_row_range(id)
-                                {
+                                if let Some((_, max_row)) = self.get_message_visual_row_range(id) {
                                     self.buf_cursor.row = max_row;
                                 }
                             }
@@ -1057,9 +1079,7 @@ impl Component for ChatWindow {
                                 self.buf_cursor.row = 0;
                                 self.goto_top();
                             } else if let Some(id) = self.selection_locked_message_id {
-                                if let Some((min_row, _)) =
-                                    self.get_message_visual_row_range(id)
-                                {
+                                if let Some((min_row, _)) = self.get_message_visual_row_range(id) {
                                     self.buf_cursor.row = min_row;
                                 }
                             }

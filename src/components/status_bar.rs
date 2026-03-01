@@ -204,10 +204,7 @@ impl Component for StatusBar {
                         .add_modifier(Modifier::BOLD),
                 ),
                 Span::raw(" "),
-                Span::styled(
-                    msg,
-                    self.app_context.style_status_bar_message_quit_key(),
-                ),
+                Span::styled(msg, self.app_context.style_status_bar_message_quit_key()),
             ])
         } else if let Some(ref msg) = self.status_message {
             Line::from(vec![

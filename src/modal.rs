@@ -123,11 +123,11 @@ impl ModeStateMachine {
             Mode::Space => self.handle_space(key, modifiers),
             Mode::Picker => self.handle_picker(key, modifiers),
         };
-        
+
         if let ModeTransition::ModeChanged(_) = transition {
             self.clear_hint();
         }
-        
+
         transition
     }
 
