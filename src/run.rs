@@ -1,12 +1,11 @@
 #[allow(unused_imports)]
 use crate::component_name::ComponentName;
-use crate::modal::{Mode, ModeTransition};
 #[allow(unused_imports)]
 use crate::configs::custom::keymap_custom::ActionBinding;
+use crate::modal::{Mode, ModeTransition};
 use crate::{
-    action::Action, app_context::AppContext, app_error::AppError,
-    event::Event, tg::tg_backend::TgBackend,
-    tui::Tui, tui_backend::TuiBackend,
+    action::Action, app_context::AppContext, app_error::AppError, event::Event,
+    tg::tg_backend::TgBackend, tui::Tui, tui_backend::TuiBackend,
 };
 use ratatui::layout::Rect;
 use std::{collections::HashMap, io, sync::Arc, time::Duration, time::Instant};
@@ -172,7 +171,7 @@ async fn handle_tui_backend_events(
         return Ok(());
     };
     match event {
-        Event::Render => {},
+        Event::Render => {}
         Event::Resize(width, height) => {
             app_context.mark_dirty();
             app_context

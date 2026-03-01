@@ -304,17 +304,23 @@ mod tests {
     #[test]
     fn test_space_yank_and_paste() {
         let mut sm = ModeStateMachine::new();
-        
+
         // Test Space y
         sm.set_mode(Mode::Space);
         let result = sm.handle_key(KeyCode::Char('y'), empty_mods());
-        assert_eq!(result, ModeTransition::ConsumedWithAction("copy_visual_selection".to_string()));
+        assert_eq!(
+            result,
+            ModeTransition::ConsumedWithAction("copy_visual_selection".to_string())
+        );
         assert_eq!(sm.mode(), Mode::Normal);
 
         // Test Space p
         sm.set_mode(Mode::Space);
         let result = sm.handle_key(KeyCode::Char('p'), empty_mods());
-        assert_eq!(result, ModeTransition::ConsumedWithAction("paste_from_clipboard".to_string()));
+        assert_eq!(
+            result,
+            ModeTransition::ConsumedWithAction("paste_from_clipboard".to_string())
+        );
         assert_eq!(sm.mode(), Mode::Normal);
     }
 
