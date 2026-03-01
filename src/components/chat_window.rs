@@ -11,7 +11,6 @@ use crossterm::event::{KeyCode, MouseEventKind};
 use ratatui::{
     layout::{Alignment, Rect},
     style::Style,
-    symbols::border,
     text::{Line, Span, Text},
     widgets::{Block, Borders, List, ListDirection, ListItem, ListState},
 };
@@ -1104,9 +1103,13 @@ impl Component for ChatWindow {
         // ── Layout: full area for message list (header removed) ──
         let list_area = area;
 
-        // ── Message list block (clean borders, no sidebar joins) ──
+        // ── Message list block (empty space borders instead of '|') ──
         let block = Block::new()
-            .border_set(border::PLAIN)
+            .border_set(ratatui::symbols::border::Set {
+                vertical_left: " ",
+                vertical_right: " ",
+                ..ratatui::symbols::border::PLAIN
+            })
             .borders(Borders::LEFT | Borders::RIGHT)
             .style(self.app_context.style_chat());
         let list_inner = block.inner(list_area);
