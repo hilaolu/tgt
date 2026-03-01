@@ -64,6 +64,21 @@ impl SpaceMenu {
                 description: "command guide",
                 action: Action::ShowCommandGuide,
             },
+            SpaceCommand {
+                key: 'y',
+                description: "yank selection",
+                action: Action::CopyVisualSelection,
+            },
+            SpaceCommand {
+                key: 'p',
+                description: "paste clipboard",
+                action: Action::PasteFromClipboard,
+            },
+            SpaceCommand {
+                key: 'q',
+                description: "quit",
+                action: Action::TryQuit,
+            },
         ];
 
         SpaceMenu {

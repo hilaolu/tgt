@@ -147,6 +147,8 @@ pub enum Action {
     DecreaseChatListSize,
     /// Key action with a key code.
     Key(KeyCode, Modifiers),
+    /// PasteFromClipboard action.
+    PasteFromClipboard,
     /// Update area action with a rectangular area.
     UpdateArea(Rect),
     /// ShowChatWindowReply action.
@@ -392,6 +394,7 @@ impl FromStr for Action {
             "begin_visual_select" => Ok(Action::BeginVisualSelect),
             "cancel_visual_select" => Ok(Action::CancelVisualSelect),
             "copy_visual_selection" => Ok(Action::CopyVisualSelection),
+            "paste_from_clipboard" => Ok(Action::PasteFromClipboard),
             // Buffer cursor
             "buffer_cursor_up" => Ok(Action::BufferCursorUp),
             "buffer_cursor_down" => Ok(Action::BufferCursorDown),

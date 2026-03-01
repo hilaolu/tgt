@@ -114,7 +114,7 @@ impl ModeStateMachine {
                 self.mode = Mode::Visual;
                 ModeTransition::ModeChanged(Mode::Visual)
             }
-            KeyCode::Char(' ') => {
+            KeyCode::Char(' ') if _modifiers.is_empty() => {
                 self.mode = Mode::Space;
                 ModeTransition::ModeChanged(Mode::Space)
             }
@@ -131,12 +131,11 @@ impl ModeStateMachine {
                 self.mode = Mode::Normal;
                 ModeTransition::ModeChanged(Mode::Normal)
             }
-            // `y` in visual mode: copy selection then return to Normal
-            KeyCode::Char('y') => {
-                self.mode = Mode::Normal;
-                ModeTransition::ConsumedWithAction("copy_visual_selection".to_string())
-            }
             // All other keys extend selection or execute visual commands
+            KeyCode::Char(' ') if _modifiers.is_empty() => {
+                self.mode = Mode::Space;
+                ModeTransition::ModeChanged(Mode::Space)
+            }
             _ => ModeTransition::Stay,
         }
     }
@@ -194,6 +193,14 @@ impl ModeStateMachine {
             KeyCode::Char('q') => {
                 self.mode = Mode::Normal;
                 ModeTransition::ConsumedWithAction("try_quit".to_string())
+            }
+            KeyCode::Char('y') => {
+                self.mode = Mode::Normal;
+                ModeTransition::ConsumedWithAction("copy_visual_selection".to_string())
+            }
+            KeyCode::Char('p') => {
+                self.mode = Mode::Normal;
+                ModeTransition::ConsumedWithAction("paste_from_clipboard".to_string())
             }
             // Unknown space command — return to Normal
             _ => {
@@ -286,14 +293,28 @@ mod tests {
     }
 
     #[test]
-    fn test_visual_y_copies_and_returns_to_normal() {
+    fn test_visual_space_to_space() {
         let mut sm = ModeStateMachine::new();
         sm.set_mode(Mode::Visual);
+        let result = sm.handle_key(KeyCode::Char(' '), empty_mods());
+        assert_eq!(result, ModeTransition::ModeChanged(Mode::Space));
+        assert_eq!(sm.mode(), Mode::Space);
+    }
+
+    #[test]
+    fn test_space_yank_and_paste() {
+        let mut sm = ModeStateMachine::new();
+        
+        // Test Space y
+        sm.set_mode(Mode::Space);
         let result = sm.handle_key(KeyCode::Char('y'), empty_mods());
-        assert_eq!(
-            result,
-            ModeTransition::ConsumedWithAction("copy_visual_selection".to_string())
-        );
+        assert_eq!(result, ModeTransition::ConsumedWithAction("copy_visual_selection".to_string()));
+        assert_eq!(sm.mode(), Mode::Normal);
+
+        // Test Space p
+        sm.set_mode(Mode::Space);
+        let result = sm.handle_key(KeyCode::Char('p'), empty_mods());
+        assert_eq!(result, ModeTransition::ConsumedWithAction("paste_from_clipboard".to_string()));
         assert_eq!(sm.mode(), Mode::Normal);
     }
 
