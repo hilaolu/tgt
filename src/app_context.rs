@@ -350,6 +350,12 @@ impl AppContext {
         self.mode_state_machine.lock().unwrap().mode()
     }
 
+    /// Get the current mode hint, if any.
+    #[inline]
+    pub fn current_mode_hint(&self) -> Option<String> {
+        self.mode_state_machine.lock().unwrap().hint().cloned()
+    }
+
     /// Get a mutable reference to the mode state machine.
     pub fn mode_state_machine(&self) -> MutexGuard<'_, ModeStateMachine> {
         self.mode_state_machine.lock().unwrap()
@@ -358,6 +364,16 @@ impl AppContext {
     /// Set the editor mode directly.
     pub fn set_mode(&self, mode: Mode) {
         self.mode_state_machine.lock().unwrap().set_mode(mode);
+    }
+    
+    /// Set the editor mode hint directly.
+    pub fn set_mode_hint(&self, hint: String) {
+        self.mode_state_machine.lock().unwrap().set_hint(hint);
+    }
+    
+    /// Clear the editor mode hint directly.
+    pub fn clear_mode_hint(&self) {
+        self.mode_state_machine.lock().unwrap().clear_hint();
     }
 
     // ===== COMMON ======

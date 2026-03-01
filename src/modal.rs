@@ -54,11 +54,18 @@ pub enum ModeTransition {
 #[derive(Debug, Clone)]
 pub struct ModeStateMachine {
     mode: Mode,
+    /// An optional hint message (e.g., "yank 1 line to clipboard") that is
+    /// displayed in the status bar. This is cleared on any mode switch or
+    /// general state transition.
+    hint: Option<String>,
 }
 
 impl Default for ModeStateMachine {
     fn default() -> Self {
-        Self { mode: Mode::Normal }
+        Self {
+            mode: Mode::Normal,
+            hint: None,
+        }
     }
 }
 
@@ -73,6 +80,23 @@ impl ModeStateMachine {
         self.mode
     }
 
+    /// Get the current mode hint, if any.
+    pub fn hint(&self) -> Option<&String> {
+        self.hint.as_ref()
+    }
+
+    /// Set a mode hint to be displayed in the UI.
+    pub fn set_hint(&mut self, hint: String) {
+        self.hint = Some(hint);
+    }
+
+    /// Clear the current mode hint.
+    pub fn clear_hint(&mut self) {
+        self.hint = None;
+    }
+
+    /// Force-set the mode (used when actions externally trigger mode changes,
+    /// e.g. `Action::SetMode`). This also clears any active hint.
     /// Force-set the mode (used when actions externally trigger mode changes,
     /// e.g. `Action::SetMode`).
     pub fn set_mode(&mut self, mode: Mode) {
@@ -89,13 +113,22 @@ impl ModeStateMachine {
     /// are NOT handled here — they return `ModeTransition::Stay` and are
     /// dispatched by the keymap system.
     pub fn handle_key(&mut self, key: KeyCode, modifiers: KeyModifiers) -> ModeTransition {
-        match self.mode {
+        // Clear the hint on any key press unless it's a command that stays in Normal
+        // We'll let the event loop in `run.rs` explicitly clear it if it's a normal
+        // command key, but for mode switches we clear it here.
+        let transition = match self.mode {
             Mode::Normal => self.handle_normal(key, modifiers),
             Mode::Visual => self.handle_visual(key, modifiers),
             Mode::Insert => self.handle_insert(key, modifiers),
             Mode::Space => self.handle_space(key, modifiers),
             Mode::Picker => self.handle_picker(key, modifiers),
+        };
+        
+        if let ModeTransition::ModeChanged(_) = transition {
+            self.clear_hint();
         }
+        
+        transition
     }
 
     // ─── Normal mode transitions ───────────────────────────────────────
@@ -129,7 +162,7 @@ impl ModeStateMachine {
         match key {
             KeyCode::Esc => {
                 self.mode = Mode::Normal;
-                ModeTransition::ModeChanged(Mode::Normal)
+                ModeTransition::ConsumedWithAction("chat_window_unselect".to_string())
             }
             // All other keys extend selection or execute visual commands
             KeyCode::Char(' ') if _modifiers.is_empty() => {
@@ -159,7 +192,7 @@ impl ModeStateMachine {
         match key {
             KeyCode::Esc => {
                 self.mode = Mode::Normal;
-                ModeTransition::ModeChanged(Mode::Normal)
+                ModeTransition::ConsumedWithAction("chat_window_unselect".to_string())
             }
             KeyCode::Char('b') => {
                 self.mode = Mode::Picker;
@@ -196,7 +229,7 @@ impl ModeStateMachine {
             }
             KeyCode::Char('y') => {
                 self.mode = Mode::Normal;
-                ModeTransition::ConsumedWithAction("copy_visual_selection".to_string())
+                ModeTransition::ConsumedWithAction("chat_window_copy".to_string())
             }
             KeyCode::Char('p') => {
                 self.mode = Mode::Normal;
@@ -288,7 +321,10 @@ mod tests {
         let mut sm = ModeStateMachine::new();
         sm.set_mode(Mode::Visual);
         let result = sm.handle_key(KeyCode::Esc, empty_mods());
-        assert_eq!(result, ModeTransition::ModeChanged(Mode::Normal));
+        assert_eq!(
+            result,
+            ModeTransition::ConsumedWithAction("chat_window_unselect".to_string())
+        );
         assert_eq!(sm.mode(), Mode::Normal);
     }
 
@@ -310,7 +346,7 @@ mod tests {
         let result = sm.handle_key(KeyCode::Char('y'), empty_mods());
         assert_eq!(
             result,
-            ModeTransition::ConsumedWithAction("copy_visual_selection".to_string())
+            ModeTransition::ConsumedWithAction("chat_window_copy".to_string())
         );
         assert_eq!(sm.mode(), Mode::Normal);
 
@@ -353,7 +389,10 @@ mod tests {
         let mut sm = ModeStateMachine::new();
         sm.set_mode(Mode::Space);
         let result = sm.handle_key(KeyCode::Esc, empty_mods());
-        assert_eq!(result, ModeTransition::ModeChanged(Mode::Normal));
+        assert_eq!(
+            result,
+            ModeTransition::ConsumedWithAction("chat_window_unselect".to_string())
+        );
         assert_eq!(sm.mode(), Mode::Normal);
     }
 

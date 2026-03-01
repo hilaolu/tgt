@@ -67,6 +67,12 @@ pub struct ChatWindow {
     selection_locked_message_id: Option<i64>,
     /// Cached visible height of the message list area (updated each draw).
     cached_viewport_height: usize,
+    /// Track the mode from the last Action::SetMode call.
+    last_mode: Mode,
+    /// Cached line counts from the last draw call for visual row calculations.
+    cached_line_counts: Vec<usize>,
+    /// The exact width used for text wrapping during the last draw call.
+    last_rendered_wrap_width: i32,
 }
 /// Implementation of the `ChatWindow` struct.
 impl ChatWindow {
@@ -96,20 +102,23 @@ impl ChatWindow {
             selection_anchor: None,
             selection_locked_message_id: None,
             cached_viewport_height: 0,
+            last_mode: Mode::Normal,
+            cached_line_counts: vec![],
+            last_rendered_wrap_width: 80,
         }
     }
     /// Applies visual selection highlighting to a `Text` object for a message starting at a given visual row.
-    fn apply_selection_highlight<'a>(&self, text: &mut Text<'a>, message_visual_start_row: usize) {
+    fn apply_selection_highlight<'a>(&self, text: &mut Text<'a>, message_visual_start_row: i32) {
         if let (Some(anchor), Some(_id)) =
             (&self.selection_anchor, self.selection_locked_message_id)
         {
             let current = &self.buf_cursor;
-            let start_v_row = anchor.row.min(current.row);
-            let end_v_row = anchor.row.max(current.row);
+            let start_v_row = anchor.row.min(current.row) as i32;
+            let end_v_row = anchor.row.max(current.row) as i32;
             let selection_style = Style::default().add_modifier(ratatui::style::Modifier::REVERSED);
 
             for (i, line) in text.lines.iter_mut().enumerate() {
-                let v_row = message_visual_start_row + i;
+                let v_row = message_visual_start_row + i as i32;
                 if v_row >= start_v_row && v_row <= end_v_row {
                     let start_v_col = if anchor.row < current.row {
                         anchor.col
@@ -119,11 +128,11 @@ impl ChatWindow {
                         anchor.col.min(current.col)
                     };
                     let end_v_col = if anchor.row < current.row {
-                        current.col
+                        current.col + 1
                     } else if anchor.row > current.row {
-                        anchor.col
+                        anchor.col + 1
                     } else {
-                        anchor.col.max(current.col)
+                        anchor.col.max(current.col) + 1
                     };
 
                     let mut current_col = 0;
@@ -168,108 +177,140 @@ impl ChatWindow {
     fn get_message_visual_row_range(
         &self,
         target_message_id: i64,
-        wrap_width: i32,
     ) -> Option<(usize, usize)> {
-        // Need to replicate the line height logic from `draw`.
-        let mut line_counts: Vec<usize> = self
-            .message_list
-            .iter()
-            .map(|m| {
-                m.get_lines_styled_with_style(Style::default(), wrap_width)
-                    .len()
-            })
-            .collect();
-
-        // Include inline input heights if active
-        if let Some(ref inline) = self.inline_input {
-            if inline.message_id.is_none() {
-                // Draft at the bottom
-                // We'll skip complex draft height re-calculation for now and use a safe estimate
-                // or replicate full logic.
-                line_counts.push(3); // Simplified estimate for draft
-            }
-        }
-
-        // Reverse to match `draw` logic (items.reverse(); line_counts.reverse(); BottomToTop)
-        line_counts.reverse();
-        let offset = self.message_list_state.offset();
-        let viewport_height = self.cached_viewport_height as i32;
-        let mut current_y = viewport_height;
-
-        // Find the index of the message in the reversed list
-        // Note: the original list has the newest message at the end.
-        // Reversed line_counts starts with the newest message at index 0.
-        let target_reversed_idx = if let Some(ref inline) = self.inline_input {
-            if inline.message_id == Some(target_message_id) {
-                // Editing inline - find its original index
-                self.message_list
-                    .iter()
-                    .rev()
-                    .position(|m| m.id() == target_message_id)
-            } else if inline.message_id.is_none() {
-                // Draft - it's at index 0 in the reversed list
-                Some(0)
-            } else {
-                self.message_list
-                    .iter()
-                    .rev()
-                    .position(|m| m.id() == target_message_id)
-            }
-        } else {
-            self.message_list
-                .iter()
-                .rev()
-                .position(|m| m.id() == target_message_id)
-        };
+        let target_reversed_idx = self.message_list.iter().rev().position(|m| m.id() == target_message_id);
 
         if let Some(idx) = target_reversed_idx {
-            for (i, &height) in line_counts.iter().enumerate().skip(offset) {
+            let offset = self.message_list_state.offset();
+            let viewport_height = self.cached_viewport_height as i32;
+            let mut current_y = viewport_height;
+            for (i, &height) in self.cached_line_counts.iter().enumerate().skip(offset) {
                 let h = height as i32;
                 current_y -= h;
                 if i == idx {
-                    let min_row = current_y.max(0) as usize;
-                    let max_row = (current_y + h - 1).min(viewport_height - 1) as usize;
-                    return Some((min_row, max_row));
-                }
-                if current_y <= 0 {
-                    break;
+                    let min = current_y.max(0) as usize;
+                    let max = (current_y + h - 1).min(viewport_height - 1) as usize;
+                    return Some((min, max));
                 }
             }
         }
-
         None
     }
 
     /// Copies the visually selected text within the locked message to the system clipboard.
-    fn copy_visual_selection(&mut self, wrap_width: i32) {
+    fn copy_visual_selection(&mut self) {
         if let (Some(id), Some(anchor)) = (self.selection_locked_message_id, &self.selection_anchor)
         {
             let current = &self.buf_cursor;
+            let wrap_width = self.last_rendered_wrap_width;
+
+            // Find the target message and its index in the rendered list
+            let mut rendered_items_reversed_idx = 0;
+            if let Some(ref inline) = self.inline_input {
+                if inline.message_id.is_none() {
+                    // There's a draft at the very bottom
+                    if id == 0 {
+                        // Yanking from the draft itself (unlikely but possible)
+                        // rendered_items_reversed_idx = 0;
+                    } else {
+                        rendered_items_reversed_idx += 1;
+                    }
+                }
+            }
+            if self.app_context.tg_context().is_history_loading() {
+                rendered_items_reversed_idx += 1;
+            }
+
+            let message_pos = self.message_list.iter().rev().position(|m| m.id() == id);
+            let target_reversed_idx = message_pos.map(|pos| rendered_items_reversed_idx + pos);
 
             // Get all visual lines for the target message
-            let lines = if let Some(ref inline) = self.inline_input {
-                if inline.message_id == Some(id) {
-                    // This is currently very complex to replicate precisely without a helper.
-                    // For now, assume it's one of the already loaded messages.
-                    return;
+            let is_editing_target = self.inline_input.as_ref().is_some_and(|i| i.message_id == Some(id));
+            let lines = if is_editing_target {
+                let inline = self.inline_input.as_ref().unwrap();
+                // Use the text from the inline input if currently editing this message
+                use unicode_width::UnicodeWidthChar;
+                let mut text_lines = Vec::new();
+                let target_name = self
+                    .app_context
+                    .tg_context()
+                    .try_name_from_chats_or_users(self.app_context.tg_context().me())
+                    .unwrap_or_default();
+                let name_style = self.app_context.style_chat_message_myself_name();
+                let content_style = self.app_context.style_chat_message_myself_content();
+
+                text_lines.push(Line::from(vec![
+                    Span::styled(target_name, name_style),
+                    Span::raw(": "),
+                ]));
+
+                let mut current_line_spans = Vec::new();
+                let mut current_len = 0;
+
+                for c in inline.text.chars() {
+                    let char_w = c.width().unwrap_or(1);
+                    if c == '\n' {
+                        text_lines.push(Line::from(std::mem::take(&mut current_line_spans)));
+                        current_len = 0;
+                    } else {
+                        if current_len + char_w > wrap_width as usize && current_len > 0 {
+                            text_lines.push(Line::from(std::mem::take(&mut current_line_spans)));
+                            current_len = 0;
+                        }
+                        current_line_spans.push(Span::styled(c.to_string(), content_style));
+                        current_len += char_w;
+                    }
+                }
+                if !current_line_spans.is_empty() {
+                    text_lines.push(Line::from(current_line_spans));
+                }
+                let content = Text::from(text_lines);
+
+                let is_reply = inline.reply_to_message_id.is_some();
+                if is_reply {
+                    let border_style = self.app_context.style_item_reply_target();
+                    Self::wrap_text_with_reply_border(content, border_style, Alignment::Left, true).lines
                 } else {
-                    self.message_list
-                        .iter()
-                        .find(|m| m.id() == id)
-                        .map(|m| m.get_lines_styled_with_style(Style::default(), wrap_width))
-                        .unwrap_or_default()
+                    content.lines
+                }
+            } else if let Some(message_entry) = self.message_list.iter().find(|m| m.id() == id) {
+                let myself = message_entry.sender_id() == self.app_context.tg_context().me();
+                let is_unread_outbox = myself && message_entry.id() > self.app_context.tg_context().last_read_outbox_message_id();
+                let (name_style, content_style, alignment) = if myself {
+                    (self.app_context.style_chat_message_myself_name(), self.app_context.style_chat_message_myself_content(), Alignment::Right)
+                } else {
+                    (self.app_context.style_chat_message_other_name(), self.app_context.style_chat_message_other_content(), Alignment::Left)
+                };
+                let content = message_entry.get_text_styled(myself, &self.app_context, is_unread_outbox, name_style, content_style, wrap_width).alignment(alignment);
+                let reply_message_id = self.app_context.tg_context().reply_message_id().as_i64();
+                if reply_message_id != 0 && id == reply_message_id {
+                    let border_style = self.app_context.style_item_reply_target();
+                    Self::wrap_text_with_reply_border(content, border_style, alignment, myself).lines
+                } else {
+                    content.lines
                 }
             } else {
-                self.message_list
-                    .iter()
-                    .find(|m| m.id() == id)
-                    .map(|m| m.get_lines_styled_with_style(Style::default(), wrap_width))
-                    .unwrap_or_default()
+                vec![]
             };
 
-            if let Some((min_row, _)) = self.get_message_visual_row_range(id, wrap_width) {
-                let start_v_row = anchor.row.min(current.row);
-                let end_v_row = anchor.row.max(current.row);
+            let mut message_visual_start_row = None;
+            if let Some(idx) = target_reversed_idx {
+                let offset = self.message_list_state.offset();
+                let viewport_height = self.cached_viewport_height as i32;
+                let mut current_y = viewport_height;
+                for (i, &height) in self.cached_line_counts.iter().enumerate().skip(offset) {
+                    let h = height as i32;
+                    current_y -= h;
+                    if i == idx {
+                        message_visual_start_row = Some(current_y);
+                        break;
+                    }
+                }
+            }
+
+            if let Some(min_row) = message_visual_start_row {
+                let start_v_row = anchor.row.min(current.row) as i32;
+                let end_v_row = anchor.row.max(current.row) as i32;
                 let start_v_col = if anchor.row < current.row {
                     anchor.col
                 } else if anchor.row > current.row {
@@ -278,16 +319,16 @@ impl ChatWindow {
                     anchor.col.min(current.col)
                 };
                 let end_v_col = if anchor.row < current.row {
-                    current.col
+                    current.col + 1
                 } else if anchor.row > current.row {
-                    anchor.col
+                    anchor.col + 1
                 } else {
-                    anchor.col.max(current.col)
+                    anchor.col.max(current.col) + 1
                 };
 
                 let mut selected_text = String::new();
                 for (i, line) in lines.iter().enumerate() {
-                    let v_row = min_row + i;
+                    let v_row = min_row + i as i32;
                     if v_row >= start_v_row && v_row <= end_v_row {
                         let line_text: String =
                             line.spans.iter().map(|s| s.content.as_ref()).collect();
@@ -311,20 +352,34 @@ impl ChatWindow {
                     }
                 }
 
-                if !selected_text.is_empty() {
-                    let line_count = selected_text.lines().count();
-                    if let Ok(mut clipboard) = Clipboard::new() {
-                        if clipboard.set_text(selected_text).is_ok() {
-                            if let Some(tx) = self.action_tx.as_ref() {
-                                let _ = tx.send(Action::StatusMessage(format!(
-                                    "Yanked {} line(s) to clipboard",
-                                    line_count
-                                )));
-                                let _ = tx.send(Action::SetMode(Mode::Normal));
-                            }
+                if let Some(tx) = self.action_tx.as_ref() {
+                    if !selected_text.is_empty() {
+                        let line_count = selected_text.lines().count();
+                        let success = Clipboard::new()
+                            .and_then(|mut c| c.set_text(selected_text).map_err(|e| e.into()))
+                            .is_ok();
+
+                        if success {
+                            let _ = tx.send(Action::SetModeHint(format!(
+                                "yank {} line(s) to clipboard",
+                                line_count
+                            )));
+                        } else {
+                            let _ = tx.send(Action::SetModeHint(
+                                "failed to copy to clipboard".to_string(),
+                            ));
                         }
+                    } else {
+                        let _ = tx.send(Action::SetModeHint("nothing selected to copy".to_string()));
                     }
                 }
+                self.unselect();
+            } else {
+                // If message row range can't be found (e.g. message too far from viewport)
+                if let Some(tx) = self.action_tx.as_ref() {
+                    let _ = tx.send(Action::SetModeHint("nothing selected to copy".to_string()));
+                }
+                self.unselect();
             }
         }
     }
@@ -349,6 +404,9 @@ impl ChatWindow {
 
     /// Select the next message item in the list (down = towards newer messages).
     fn next(&mut self) {
+        if self.app_context.current_mode() == Mode::Normal {
+            self.unselect();
+        }
         let len = self.message_list.len();
         // Load more history when near top of loaded range (and not already loading)
         if len > 0 && !self.app_context.tg_context().is_history_loading() {
@@ -388,6 +446,9 @@ impl ChatWindow {
 
     /// Select the previous message item in the list (up = towards older messages).
     fn previous(&mut self) {
+        if self.app_context.current_mode() == Mode::Normal {
+            self.unselect();
+        }
         let len = self.message_list.len();
         // Load newer messages when near bottom (so user can scroll forward in time)
         if len > 0 && !self.app_context.tg_context().is_history_loading() {
@@ -429,6 +490,8 @@ impl ChatWindow {
     /// Unselect the message item in the list.
     fn unselect(&mut self) {
         self.message_list_state.select(None);
+        self.selection_anchor = None;
+        self.selection_locked_message_id = None;
     }
 
     /// Scroll half a page up (towards older messages).
@@ -500,24 +563,27 @@ impl ChatWindow {
     /// Copy the selected message item in the list.
     fn copy_selected(&self) {
         let Some(selected) = self.message_list_state.selected() else {
+            if let Some(tx) = self.action_tx.as_ref() {
+                let _ = tx.send(Action::SetModeHint("nothing selected to copy".into()));
+            }
             return;
         };
         let Some(entry) = self.message_list.get(selected) else {
+            if let Some(tx) = self.action_tx.as_ref() {
+                let _ = tx.send(Action::SetModeHint("nothing selected to copy".into()));
+            }
             return;
         };
         let message = entry.message_content_to_string();
-        match Clipboard::new() {
-            Ok(mut clipboard) => {
-                if clipboard.set_text(&message).is_ok() {
-                    if let Some(tx) = self.action_tx.as_ref() {
-                        let _ = tx.send(Action::StatusMessage("Message yanked".into()));
-                    }
-                } else {
-                    tracing::warn!("Clipboard set_text failed");
-                }
-            }
-            Err(e) => {
-                tracing::warn!("Clipboard unavailable (copy message): {}", e);
+        let success = Clipboard::new()
+            .and_then(|mut c| c.set_text(message).map_err(|e| e.into()))
+            .is_ok();
+
+        if let Some(tx) = self.action_tx.as_ref() {
+            if success {
+                let _ = tx.send(Action::SetModeHint("message yanked to clipboard".into()));
+            } else {
+                let _ = tx.send(Action::SetModeHint("failed to copy to clipboard".into()));
             }
         }
     }
@@ -679,9 +745,7 @@ impl Component for ChatWindow {
                         }
                     }
                 } else if mode == Mode::Normal {
-                    // Leaving visual/insert mode: reset selection state
-                    self.selection_anchor = None;
-                    self.selection_locked_message_id = None;
+                    // Selection cleanup is now handled by explicit actions (Unselect/Copy)
                 }
 
                 if mode != Mode::Insert {
@@ -715,12 +779,22 @@ impl Component for ChatWindow {
                         });
                     }
                 }
+                self.last_mode = mode;
             }
             // --- Legacy actions (kept for non-nav compatibility) ---
             Action::ChatWindowUnselect => self.unselect(),
             Action::ChatWindowDeleteForEveryone => self.delete_selected(true),
             Action::ChatWindowDeleteForMe => self.delete_selected(false),
-            Action::ChatWindowCopy => self.copy_selected(),
+            Action::ChatWindowCopy => {
+                if self.selection_locked_message_id.is_some() && self.selection_anchor.is_some() {
+                    self.copy_visual_selection();
+                } else {
+                    self.copy_selected();
+                }
+            }
+            Action::CopyVisualSelection => {
+                self.copy_visual_selection();
+            }
             Action::ChatWindowEdit => self.edit_selected(),
             Action::ChatWindowOpenDraft => {
                 self.inline_input = Some(InlineInput {
@@ -775,14 +849,20 @@ impl Component for ChatWindow {
                 // Handled by CoreWindow: opens search overlay or focuses ChatList
             }
             Action::PasteFromClipboard => {
-                if let Ok(mut clipboard) = Clipboard::new() {
-                    if let Ok(text) = clipboard.get_text() {
-                        self.update(Action::Paste(text));
+                let text = Clipboard::new().and_then(|mut c| c.get_text().map_err(|e| e.into()));
+                match text {
+                    Ok(t) => self.update(Action::Paste(t)),
+                    Err(_) => {
+                        if let Some(tx) = self.action_tx.as_ref() {
+                            let _ = tx.send(Action::SetModeHint("failed to paste from clipboard".to_string()));
+                            let _ = tx.send(Action::SetMode(Mode::Normal));
+                        }
                     }
                 }
             }
             Action::Paste(text) => {
                 let char_count = text.chars().count();
+                let line_count = text.lines().count().max(1);
                 if let Some(inline) = self.inline_input.as_mut() {
                     let chars: Vec<char> = inline.text.chars().collect();
                     let mut new_text = String::new();
@@ -799,10 +879,19 @@ impl Component for ChatWindow {
                     inline.cursor += char_count;
 
                     if let Some(tx) = self.action_tx.as_ref() {
-                        let _ = tx.send(Action::StatusMessage(format!(
-                            "Pasted {} character(s)",
-                            char_count
+                        let _ = tx.send(Action::SetModeHint(format!(
+                            "paste {} line(s) from clipboard",
+                            line_count
                         )));
+                        let _ = tx.send(Action::SetMode(Mode::Normal));
+                    }
+                } else {
+                    if let Some(tx) = self.action_tx.as_ref() {
+                        let _ = tx.send(Action::SetModeHint(format!(
+                            "paste {} line(s) from clipboard",
+                            line_count
+                        )));
+                        let _ = tx.send(Action::SetMode(Mode::Normal));
                     }
                 }
             }
@@ -899,9 +988,6 @@ impl Component for ChatWindow {
                 } else if self.focused {
                     let current_mode = self.app_context.current_mode();
                     let vp_h = self.cached_viewport_height;
-                    // Use a reasonable default wrap width for navigation if draw hasn't happened yet
-                    let wrap_width =
-                        (self.app_context.app_config().photo_max_dimension / 10).max(80) as i32;
 
                     match key_code {
                         // j / ↓ = move cursor down one line
@@ -909,7 +995,7 @@ impl Component for ChatWindow {
                             if current_mode == Mode::Visual {
                                 if let Some(id) = self.selection_locked_message_id {
                                     if let Some((_, max_row)) =
-                                        self.get_message_visual_row_range(id, wrap_width)
+                                        self.get_message_visual_row_range(id)
                                     {
                                         if self.buf_cursor.row < max_row {
                                             self.buf_cursor.row += 1;
@@ -928,7 +1014,7 @@ impl Component for ChatWindow {
                             if current_mode == Mode::Visual {
                                 if let Some(id) = self.selection_locked_message_id {
                                     if let Some((min_row, _)) =
-                                        self.get_message_visual_row_range(id, wrap_width)
+                                        self.get_message_visual_row_range(id)
                                     {
                                         if self.buf_cursor.row > min_row {
                                             self.buf_cursor.row -= 1;
@@ -959,7 +1045,7 @@ impl Component for ChatWindow {
                                 self.goto_bottom();
                             } else if let Some(id) = self.selection_locked_message_id {
                                 if let Some((_, max_row)) =
-                                    self.get_message_visual_row_range(id, wrap_width)
+                                    self.get_message_visual_row_range(id)
                                 {
                                     self.buf_cursor.row = max_row;
                                 }
@@ -972,7 +1058,7 @@ impl Component for ChatWindow {
                                 self.goto_top();
                             } else if let Some(id) = self.selection_locked_message_id {
                                 if let Some((min_row, _)) =
-                                    self.get_message_visual_row_range(id, wrap_width)
+                                    self.get_message_visual_row_range(id)
                                 {
                                     self.buf_cursor.row = min_row;
                                 }
@@ -988,7 +1074,7 @@ impl Component for ChatWindow {
                         }
                         // Visual Mode: Yank (y)
                         KeyCode::Char('y') if current_mode == Mode::Visual => {
-                            self.copy_visual_selection(wrap_width);
+                            self.copy_visual_selection();
                             if let Some(tx) = self.action_tx.as_ref() {
                                 let _ = tx.send(Action::SetMode(Mode::Normal));
                             }
@@ -1126,6 +1212,7 @@ impl Component for ChatWindow {
             .style(self.app_context.style_chat());
         let list_inner = block.inner(list_area);
         let wrap_width = list_inner.width.saturating_sub(2) as i32;
+        self.last_rendered_wrap_width = wrap_width;
 
         let reply_message_id = self.app_context.tg_context().reply_message_id().as_i64();
         let mut is_unread_outbox = true;
@@ -1345,8 +1432,7 @@ impl Component for ChatWindow {
                     let orig_idx = raw_contents.len().saturating_sub(1).saturating_sub(i);
                     if let Some((msg_id, content)) = raw_contents.get_mut(orig_idx) {
                         if *msg_id == locked_id {
-                            let start_row = current_y.max(0) as usize;
-                            self.apply_selection_highlight(content, start_row);
+                            self.apply_selection_highlight(content, current_y);
                         }
                     }
 
@@ -1365,6 +1451,7 @@ impl Component for ChatWindow {
         // Render from bottom to top: reverse so newest is drawn at bottom
         items.reverse();
         line_counts.reverse();
+        self.cached_line_counts = line_counts.clone();
         let item_count = items.len();
 
         // Convert selection index for reversed list (widget-space)

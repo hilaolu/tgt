@@ -272,12 +272,16 @@ pub enum Action {
     /// Navigate to next message in photo viewer.
     PhotoViewerNext,
 
-    /// StatusMessage: short message to show in the status bar (e.g. "Message yanked").
+    /// StatusMessage: short message to show in the status bar (e.g. "Message deleted").
     StatusMessage(String),
 
     // ─── Modal system actions ──────────────────────────────────────────
     /// Set the editor mode (Normal/Visual/Insert/Space/Picker).
     SetMode(Mode),
+    /// Set a hint for the current mode.
+    SetModeHint(String),
+    /// Clear the hint for the current mode.
+    ClearModeHint,
     /// Open picker for active/open chat buffers (space+b).
     OpenPickerActiveChats,
     /// Open picker for all chats (space+f).

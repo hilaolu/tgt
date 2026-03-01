@@ -180,19 +180,25 @@ async fn handle_tui_backend_events(
         }
         Event::Key(key, modifiers) => {
             // ── Modal state machine: check mode transitions first ──────────
-            let transition = {
+            let (old_mode, transition, new_mode) = {
                 let mut sm = app_context.mode_state_machine();
-                sm.handle_key(key, modifiers)
+                let old = sm.mode();
+                let t = sm.handle_key(key, modifiers);
+                let new = sm.mode();
+                (old, t, new)
             };
 
             match transition {
-                ModeTransition::ModeChanged(new_mode) => {
+                ModeTransition::ModeChanged(_) => {
                     // Mode changed — dispatch SetMode action and skip keymap lookup
                     app_context.action_tx().send(Action::SetMode(new_mode))?;
                     app_context.mark_dirty();
                     return Ok(());
                 }
                 ModeTransition::ConsumedWithAction(action_str) => {
+                    if old_mode != new_mode {
+                        app_context.action_tx().send(Action::SetMode(new_mode))?;
+                    }
                     // State machine consumed the key and produced an action string
                     if let Ok(action) = action_str.parse::<Action>() {
                         app_context.action_tx().send(action)?;
@@ -686,6 +692,14 @@ pub async fn handle_app_actions(
             Action::SetMode(mode) => {
                 // Mode transition — update state machine and mark for render
                 app_context.set_mode(*mode);
+                app_context.mark_dirty();
+            }
+            Action::SetModeHint(hint) => {
+                app_context.set_mode_hint(hint.clone());
+                app_context.mark_dirty();
+            }
+            Action::ClearModeHint => {
+                app_context.clear_mode_hint();
                 app_context.mark_dirty();
             }
             _ => {}

@@ -191,7 +191,25 @@ impl Component for StatusBar {
         }
 
         // Render hint line (row 2)
-        let hint_content = if let Some(ref msg) = self.status_message {
+        // Priorities: 1. Mode Hint (e.g., yank/paste), 2. Status message (e.g. error)
+        let mode_hint = self.app_context.current_mode_hint();
+
+        let hint_content = if let Some(msg) = mode_hint {
+            Line::from(vec![
+                Span::styled(
+                    " HINT ",
+                    Style::default()
+                        .fg(Color::Black)
+                        .bg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::raw(" "),
+                Span::styled(
+                    msg,
+                    self.app_context.style_status_bar_message_quit_key(),
+                ),
+            ])
+        } else if let Some(ref msg) = self.status_message {
             Line::from(vec![
                 Span::styled(
                     " STATUS ",
@@ -210,7 +228,7 @@ impl Component for StatusBar {
             Line::from("")
         };
 
-        let hint_para = Paragraph::new(hint_content).style(self.app_context.style_status_bar());
+        let hint_para = Paragraph::new(hint_content).style(Style::default());
         frame.render_widget(hint_para, hint_area);
 
         Ok(())
