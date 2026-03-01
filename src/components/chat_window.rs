@@ -312,10 +312,14 @@ impl ChatWindow {
                 }
 
                 if !selected_text.is_empty() {
+                    let line_count = selected_text.lines().count();
                     if let Ok(mut clipboard) = Clipboard::new() {
                         if clipboard.set_text(selected_text).is_ok() {
                             if let Some(tx) = self.action_tx.as_ref() {
-                                let _ = tx.send(Action::StatusMessage("Selection yanked".into()));
+                                let _ = tx.send(Action::StatusMessage(format!(
+                                    "Yanked {} line(s) to clipboard",
+                                    line_count
+                                )));
                                 let _ = tx.send(Action::SetMode(Mode::Normal));
                             }
                         }
@@ -778,6 +782,7 @@ impl Component for ChatWindow {
                 }
             }
             Action::Paste(text) => {
+                let char_count = text.chars().count();
                 if let Some(inline) = self.inline_input.as_mut() {
                     let chars: Vec<char> = inline.text.chars().collect();
                     let mut new_text = String::new();
@@ -791,7 +796,14 @@ impl Component for ChatWindow {
                         new_text.push_str(&text);
                     }
                     inline.text = new_text;
-                    inline.cursor += text.chars().count();
+                    inline.cursor += char_count;
+
+                    if let Some(tx) = self.action_tx.as_ref() {
+                        let _ = tx.send(Action::StatusMessage(format!(
+                            "Pasted {} character(s)",
+                            char_count
+                        )));
+                    }
                 }
             }
             Action::Key(key_code, modifiers) => {

@@ -5,7 +5,7 @@ use crate::{
     component_name::ComponentName,
     components::{
         component_traits::Component, core_window::CoreWindow, status_bar::StatusBar,
-        SMALL_AREA_HEIGHT, SMALL_AREA_WIDTH,
+        SMALL_AREA_WIDTH,
     },
     event::Event,
 };
@@ -130,13 +130,9 @@ impl Tui {
         let main_layout = Layout::new(
             Direction::Vertical,
             [
-                Constraint::Min(SMALL_AREA_HEIGHT),
+                Constraint::Fill(1),
                 Constraint::Length(if self.app_context.app_config().show_status_bar {
-                    if area.height > SMALL_AREA_HEIGHT + 5 {
-                        1
-                    } else {
-                        0
-                    }
+                    2
                 } else {
                     0
                 }),

@@ -118,6 +118,14 @@ impl Component for StatusBar {
     fn draw(&mut self, frame: &mut ratatui::Frame<'_>, area: Rect) -> std::io::Result<()> {
         let mode = self.app_context.current_mode();
 
+        // Split area into top (main status) and bottom (hint line)
+        let area_split = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Length(1), Constraint::Fill(1)])
+            .split(area);
+        let main_area = area_split[0];
+        let hint_area = area_split[1];
+
         // Get chat info
         let selected_chat = self
             .app_context
@@ -129,19 +137,12 @@ impl Component for StatusBar {
         let mode_str = format!(" {} ", mode);
         let mode_style = Self::mode_style(mode);
 
-        // Build the middle section: chat name + status message
+        // Build the middle section: chat name
         let mut middle_spans: Vec<Span<'_>> = vec![Span::raw("  ")];
         if !selected_chat.is_empty() {
             middle_spans.push(Span::styled(
                 selected_chat,
                 self.app_context.style_status_bar_open_chat_name(),
-            ));
-        }
-        if let Some(ref msg) = self.status_message {
-            middle_spans.push(Span::raw("  "));
-            middle_spans.push(Span::styled(
-                msg.as_str(),
-                self.app_context.style_status_bar_message_quit_key(),
             ));
         }
 
@@ -154,7 +155,7 @@ impl Component for StatusBar {
             String::new()
         };
 
-        // Lay out: mode tag (fixed) | middle (fill) | right (min)
+        // Lay out top line: mode tag (fixed) | middle (fill) | right (min)
         let right_width = right_text.len() as u16;
         let mode_width = mode_str.len() as u16;
 
@@ -165,7 +166,7 @@ impl Component for StatusBar {
                 Constraint::Fill(1),
                 Constraint::Length(right_width),
             ])
-            .split(area);
+            .split(main_area);
 
         // Render mode indicator
         let mode_para = Paragraph::new(Span::styled(mode_str, mode_style));
@@ -188,6 +189,29 @@ impl Component for StatusBar {
             .alignment(Alignment::Right);
             frame.render_widget(right_para, chunks[2]);
         }
+
+        // Render hint line (row 2)
+        let hint_content = if let Some(ref msg) = self.status_message {
+            Line::from(vec![
+                Span::styled(
+                    " STATUS ",
+                    Style::default()
+                        .fg(Color::Black)
+                        .bg(Color::Blue)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::raw(" "),
+                Span::styled(
+                    msg.as_str(),
+                    self.app_context.style_status_bar_message_quit_key(),
+                ),
+            ])
+        } else {
+            Line::from("")
+        };
+
+        let hint_para = Paragraph::new(hint_content).style(self.app_context.style_status_bar());
+        frame.render_widget(hint_para, hint_area);
 
         Ok(())
     }
