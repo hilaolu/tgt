@@ -24,8 +24,8 @@ theme_enable = true
 # This file must be in the configuration directory or in the `themes/` subdirectory.
 # If the theme file is in the `themes/` subdirectory, use the format: `themes/<theme_name>.toml`
 # For example: `themes/theme.toml`, `themes/monokai.toml`, `themes/nord.toml`
-# The default theme is `themes/theme.toml`
-theme_filename = "themes/theme.toml"
+# The default theme is `themes/github.toml`
+theme_filename = "themes/github.toml"
 # `take_api_id_from_telegram_config` enables taking the API_ID from the Telegram configuration file
 # or from the environment variable `API_ID`.
 take_api_id_from_telegram_config = true

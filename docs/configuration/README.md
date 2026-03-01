@@ -26,7 +26,7 @@ In the configuration directory, `tgt` looks for the following files:
 
 ### Theme Files
 
-Theme files are stored in the `themes/` subdirectory within your configuration directory. Multiple theme files can exist, and `tgt` will automatically discover all `.toml` files in the `themes/` directory. The default theme is `themes/theme.toml`.
+Theme files are stored in the `themes/` subdirectory within your configuration directory. Multiple theme files can exist, and `tgt` will automatically discover all `.toml` files in the `themes/` directory. The default theme is `themes/github.toml`.
 
 **Example theme directory structure:**
 ```
@@ -36,7 +36,7 @@ Theme files are stored in the `themes/` subdirectory within your configuration d
 ├── telegram.toml
 ├── keymap.toml
 └── themes/
-    ├── theme.toml          # Default theme
+    ├── github.toml         # Default theme
     ├── monokai.toml
     ├── nord.toml
     ├── gruvbox.toml

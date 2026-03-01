@@ -29,9 +29,9 @@ impl PaletteConfig {
             return configs::deserialize_to_config_into::<PaletteRaw, Self>(path);
         }
 
-        // If not found, try to load from themes/theme.toml
+        // If not found, try to load from themes/github.toml
         if let Ok(config_dir) = crate::utils::tgt_config_dir() {
-            let themes_path = config_dir.join("themes").join("theme.toml");
+            let themes_path = config_dir.join("themes").join("github.toml");
             if themes_path.exists() {
                 return configs::deserialize_to_config_into::<PaletteRaw, Self>(&themes_path);
             }
