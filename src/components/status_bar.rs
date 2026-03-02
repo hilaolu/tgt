@@ -144,6 +144,11 @@ impl Component for StatusBar {
                 selected_chat,
                 self.app_context.style_status_bar_open_chat_name(),
             ));
+            
+            // Append message count hint if available
+            if let Some((idx, total)) = self.app_context.chat_scroll_info() {
+                middle_spans.push(Span::raw(format!(" [{}/{}]", idx, total)));
+            }
         }
 
         // Build the right section: unread count

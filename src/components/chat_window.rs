@@ -40,6 +40,13 @@ pub struct BufferCursor {
     pub col: usize,
 }
 
+/// Defines where the cursor should snap when crossing a visual edge via scrolling.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub enum CursorSnap {
+    Top,    // Snap to the first line of the new message
+    Bottom, // Snap to the last line of the new message
+}
+
 /// `ChatWindow` is a struct that represents a window for displaying a chat.
 /// It is responsible for managing the layout and rendering of the chat window.
 pub struct ChatWindow {
@@ -73,6 +80,10 @@ pub struct ChatWindow {
     cached_line_counts: Vec<usize>,
     /// The exact width used for text wrapping during the last draw call.
     last_rendered_wrap_width: i32,
+    /// Pending instruction to snap the cursor to the top or bottom of a newly revealed message.
+    pending_cursor_snap: Option<CursorSnap>,
+    /// The number of items successfully rendered into ratatui's List state in the most recent draw frame.
+    rendered_item_count: usize,
 }
 /// Implementation of the `ChatWindow` struct.
 impl ChatWindow {
@@ -105,6 +116,8 @@ impl ChatWindow {
             last_mode: Mode::Normal,
             cached_line_counts: vec![],
             last_rendered_wrap_width: 80,
+            pending_cursor_snap: None,
+            rendered_item_count: 0,
         }
     }
     /// Applies visual selection highlighting to a `Text` object for a message starting at a given visual row.
@@ -423,14 +436,16 @@ impl ChatWindow {
     /// Build message_list from data layer (read-only API). Uses a single-lock snapshot to avoid
     /// TOCTOU: another thread clearing the store between ordered_message_ids() and get_message().
     fn refresh_message_list_from_store(&mut self) {
-        self.message_list = self.app_context.tg_context().ordered_messages_snapshot();
+        let mut list = self.app_context.tg_context().ordered_messages_snapshot();
+        
+        // Unconditionally append our pseudo-message draft seamlessly so it behaves as a native element in the grid
+        list.push(MessageEntry::new_local_draft(self.app_context.tg_context().me()));
+        
+        self.message_list = list;
     }
 
     /// Select the next message item in the list (down = towards newer messages).
     fn next(&mut self) {
-        if self.app_context.current_mode() == Mode::Normal {
-            self.unselect();
-        }
         let len = self.message_list.len();
         // Load more history when near top of loaded range (and not already loading)
         if len > 0 && !self.app_context.tg_context().is_history_loading() {
@@ -470,9 +485,6 @@ impl ChatWindow {
 
     /// Select the previous message item in the list (up = towards older messages).
     fn previous(&mut self) {
-        if self.app_context.current_mode() == Mode::Normal {
-            self.unselect();
-        }
         let len = self.message_list.len();
         // Load newer messages when near bottom (so user can scroll forward in time)
         if len > 0 && !self.app_context.tg_context().is_history_loading() {
@@ -549,18 +561,11 @@ impl ChatWindow {
 
     /// Jump to the last (newest) message.
     fn goto_bottom(&mut self) {
-        let count = self.message_list.len();
+        let count = self.rendered_item_count;
         if count > 0 {
-            let mut last = count - 1;
-            // If we have an active draft at the bottom, select it
-            if self
-                .inline_input
-                .as_ref()
-                .is_some_and(|i| i.message_id.is_none())
-            {
-                last += 1;
-            }
-            self.message_list_state.select(Some(last));
+            // Because rendered_item_count perfectly tracks all elements rendered
+            // on screen (including trailing drafts or loaders), we just select the last one.
+            self.message_list_state.select(Some(count.saturating_sub(1)));
         }
     }
 
@@ -771,14 +776,22 @@ impl Component for ChatWindow {
                 }
 
                 if mode != Mode::Insert {
-                    // When leaving insert mode, exit inline editing state
-                    self.inline_input = None;
+                    // When leaving insert mode, if we were editing a past message, clear it.
+                    // Otherwise keep it as a draft so we don't lose typed text.
+                    if let Some(inline) = &self.inline_input {
+                        if inline.message_id.is_some() {
+                            self.inline_input = None;
+                        }
+                    }
+                    if self.last_mode == Mode::Insert {
+                        self.pending_cursor_snap = Some(CursorSnap::Bottom);
+                    }
                 } else if self.inline_input.is_none() {
                     // Try to edit the currently selected message if it belongs to me
                     let mut editing = false;
                     if let Some(selected) = self.message_list_state.selected() {
                         if let Some(entry) = self.message_list.get(selected) {
-                            if entry.sender_id() == self.app_context.tg_context().me() {
+                            if entry.id() != i64::MAX && entry.sender_id() == self.app_context.tg_context().me() {
                                 let message_id = entry.id();
                                 let message = entry.message_content_to_string();
                                 self.inline_input = Some(InlineInput {
@@ -819,12 +832,25 @@ impl Component for ChatWindow {
             }
             Action::ChatWindowEdit => self.edit_selected(),
             Action::ChatWindowOpenDraft => {
-                self.inline_input = Some(InlineInput {
-                    message_id: None,
-                    reply_to_message_id: None,
-                    text: String::new(),
-                    cursor: 0,
-                });
+                if self.inline_input.is_none() {
+                    self.inline_input = Some(InlineInput {
+                        message_id: None,
+                        reply_to_message_id: None,
+                        text: String::new(),
+                        cursor: 0,
+                    });
+                } else if let Some(inline) = self.inline_input.as_mut() {
+                    // If we were editing an old message when pressing `o`,
+                    // clear it and switch to new draft implicitly to keep simple logic.
+                    if inline.message_id.is_some() {
+                        self.inline_input = Some(InlineInput {
+                            message_id: None,
+                            reply_to_message_id: None,
+                            text: String::new(),
+                            cursor: 0,
+                        });
+                    }
+                }
                 self.goto_bottom();
                 if let Some(tx) = self.action_tx.as_ref() {
                     let _ = tx.send(Action::SetMode(Mode::Insert));
@@ -921,12 +947,15 @@ impl Component for ChatWindow {
             }
             Action::Key(key_code, modifiers) => {
                 // Intercept key events if we are editing a message inline in Insert mode
-                if let Some(inline) = self.inline_input.as_mut() {
+                if self.app_context.current_mode() == Mode::Insert && self.inline_input.is_some() {
+                    let inline = self.inline_input.as_mut().unwrap();
                     let text = &mut inline.text;
                     let cursor = &mut inline.cursor;
                     match key_code {
                         KeyCode::Esc => {
-                            self.inline_input = None;
+                            if inline.message_id.is_some() {
+                                self.inline_input = None;
+                            }
                             if let Some(tx) = self.action_tx.as_ref() {
                                 let _ = tx.send(Action::SetMode(Mode::Normal));
                             }
@@ -955,7 +984,13 @@ impl Component for ChatWindow {
                                     }
                                 }
                             }
-                            self.inline_input = None;
+                            if inline.message_id.is_some() {
+                                self.inline_input = None;
+                            } else {
+                                inline.text.clear();
+                                inline.cursor = 0;
+                                inline.reply_to_message_id = None;
+                            }
                             if let Some(tx) = self.action_tx.as_ref() {
                                 let _ = tx.send(Action::SetMode(Mode::Normal));
                             }
@@ -1030,6 +1065,7 @@ impl Component for ChatWindow {
                                 self.buf_cursor.row += 1;
                             } else {
                                 // At bottom edge: scroll list towards newer messages
+                                self.pending_cursor_snap = Some(CursorSnap::Top);
                                 self.previous();
                             }
                         }
@@ -1049,6 +1085,7 @@ impl Component for ChatWindow {
                                 self.buf_cursor.row -= 1;
                             } else {
                                 // At top edge: scroll list towards older messages
+                                self.pending_cursor_snap = Some(CursorSnap::Bottom);
                                 self.next();
                             }
                         }
@@ -1264,33 +1301,52 @@ impl Component for ChatWindow {
                 )
             };
 
-            let content = if let Some(ref inline) = self.inline_input {
-                if inline.message_id == Some(message_entry.id()) {
-                    let edit_text = &inline.text;
-                    let cursor = inline.cursor;
-                    // Editable text rendering
-                    let mut text_lines = Vec::new();
-                    let target_name = self
-                        .app_context
-                        .tg_context()
-                        .try_name_from_chats_or_users(self.app_context.tg_context().me())
-                        .unwrap_or_default();
+            let is_draft_entry = message_entry.id() == i64::MAX;
+            let is_editing_this = self.inline_input.as_ref().is_some_and(|i| i.message_id == Some(message_entry.id()));
+            
+            let content = if is_draft_entry || is_editing_this {
+                let (edit_text, cursor, is_focused) = if let Some(ref inline) = self.inline_input {
+                    if is_editing_this || (is_draft_entry && inline.message_id.is_none()) {
+                        (inline.text.as_str(), inline.cursor, current_mode == Mode::Insert)
+                    } else {
+                        ("", 0, false)
+                    }
+                } else {
+                    ("", 0, false)
+                };
 
-                    text_lines.push(Line::from(vec![
-                        Span::styled(target_name, name_style),
-                        Span::raw(" [editing]"),
-                    ]));
+                // Editable text rendering
+                let mut text_lines = Vec::new();
+                let target_name = self
+                    .app_context
+                    .tg_context()
+                    .try_name_from_chats_or_users(self.app_context.tg_context().me())
+                    .unwrap_or_default();
 
-                    let mut current_line_spans = Vec::new();
-                    let mut current_len = 0;
+                let status_badge = if is_draft_entry { " [draft]" } else { " [editing]" };
+                text_lines.push(Line::from(vec![
+                    Span::styled(target_name, name_style),
+                    Span::raw(status_badge),
+                ]));
 
-                    // Simple char width approximation
+                let mut current_line_spans = Vec::new();
+                let mut current_len = 0;
+
+                let cursor_style = Style::default().add_modifier(ratatui::style::Modifier::REVERSED);
+
+                if edit_text.is_empty() {
+                    if is_focused {
+                        current_line_spans.push(Span::styled(" ", cursor_style));
+                    } else {
+                        current_line_spans.push(Span::styled(
+                            "Type a message...",
+                            Style::default().add_modifier(ratatui::style::Modifier::DIM),
+                        ));
+                    }
+                } else {
                     use unicode_width::UnicodeWidthChar;
-                    let cursor_style =
-                        Style::default().add_modifier(ratatui::style::Modifier::REVERSED);
-
                     for (i, c) in edit_text.chars().enumerate() {
-                        let style = if i == cursor {
+                        let style = if is_focused && i == cursor {
                             cursor_style
                         } else {
                             content_style
@@ -1310,28 +1366,17 @@ impl Component for ChatWindow {
                             current_len += char_w;
                         }
                     }
-                    if cursor == edit_text.chars().count() {
+                    if is_focused && cursor == edit_text.chars().count() {
                         if current_len + 1 > wrap_width as usize && current_len > 0 {
                             text_lines.push(Line::from(std::mem::take(&mut current_line_spans)));
                         }
                         current_line_spans.push(Span::styled(" ", cursor_style));
                     }
-                    if !current_line_spans.is_empty() {
-                        text_lines.push(Line::from(current_line_spans));
-                    }
-                    Text::from(text_lines).alignment(alignment)
-                } else {
-                    message_entry
-                        .get_text_styled(
-                            myself,
-                            &self.app_context,
-                            is_unread_outbox,
-                            name_style,
-                            content_style,
-                            wrap_width,
-                        )
-                        .alignment(alignment)
                 }
+                if !current_line_spans.is_empty() {
+                    text_lines.push(Line::from(current_line_spans));
+                }
+                Text::from(text_lines).alignment(alignment)
             } else {
                 message_entry
                     .get_text_styled(
@@ -1365,72 +1410,7 @@ impl Component for ChatWindow {
             raw_contents.push((0, loading_text));
         }
 
-        // ── Render Inline Draft at Bottom ──
-        if let Some(ref inline) = self.inline_input {
-            if inline.message_id.is_none() {
-                let mut text_lines = Vec::new();
-                let target_name = self
-                    .app_context
-                    .tg_context()
-                    .try_name_from_chats_or_users(self.app_context.tg_context().me())
-                    .unwrap_or_default();
-                let name_style = self.app_context.style_chat_message_myself_name();
-                let content_style = self.app_context.style_chat_message_myself_content();
 
-                text_lines.push(Line::from(vec![
-                    Span::styled(target_name, name_style),
-                    Span::raw(" [draft]"),
-                ]));
-
-                let mut current_line_spans = Vec::new();
-                let mut current_len = 0;
-
-                use unicode_width::UnicodeWidthChar;
-                let cursor_style =
-                    Style::default().add_modifier(ratatui::style::Modifier::REVERSED);
-
-                for (i, c) in inline.text.chars().enumerate() {
-                    let style = if i == inline.cursor {
-                        cursor_style
-                    } else {
-                        content_style
-                    };
-                    let char_w = c.width().unwrap_or(1);
-
-                    if c == '\n' {
-                        text_lines.push(Line::from(std::mem::take(&mut current_line_spans)));
-                        current_len = 0;
-                    } else {
-                        if current_len + char_w > wrap_width as usize && current_len > 0 {
-                            text_lines.push(Line::from(std::mem::take(&mut current_line_spans)));
-                            current_len = 0;
-                        }
-                        current_line_spans.push(Span::styled(c.to_string(), style));
-                        current_len += char_w;
-                    }
-                }
-                if inline.cursor == inline.text.chars().count() {
-                    if current_len + 1 > wrap_width as usize && current_len > 0 {
-                        text_lines.push(Line::from(std::mem::take(&mut current_line_spans)));
-                    }
-                    current_line_spans.push(Span::styled(" ", cursor_style));
-                }
-                if !current_line_spans.is_empty() {
-                    text_lines.push(Line::from(current_line_spans));
-                }
-                let content = Text::from(text_lines).alignment(Alignment::Right);
-
-                let is_reply = inline.reply_to_message_id.is_some();
-                let final_content = if is_reply {
-                    let border_style = self.app_context.style_item_reply_target();
-                    Self::wrap_text_with_reply_border(content, border_style, Alignment::Right, true)
-                } else {
-                    content
-                };
-                line_counts.push(final_content.lines.len());
-                raw_contents.push((0, final_content));
-            }
-        }
 
         // Apply visual selection highlight if in Visual mode (or Space mode with an active selection)
         if current_mode == Mode::Visual
@@ -1494,6 +1474,8 @@ impl Component for ChatWindow {
 
         frame.render_stateful_widget(list, list_area, &mut self.message_list_state);
 
+
+
         // Convert selection index back to original (list-space) for next frame/logic
         let widget_selected = self.message_list_state.selected();
         let restored_selected =
@@ -1502,9 +1484,40 @@ impl Component for ChatWindow {
 
         let offset = self.message_list_state.offset();
         let mut current_y = list_inner.height as i32;
+        let snap = self.pending_cursor_snap.take();
+
+        if let Some(snap_kind) = snap {
+            if let Some(target_idx) = widget_selected {
+                let mut snap_y = current_y;
+                for (i, &height) in line_counts.iter().enumerate().skip(offset) {
+                    let h = height as i32;
+                    let item_bottom = snap_y - 1;
+                    snap_y -= h;
+                    let item_top = snap_y;
+
+                    if i == target_idx {
+                        match snap_kind {
+                            CursorSnap::Top => {
+                                self.buf_cursor.row = item_top.clamp(0, list_inner.height as i32 - 1) as usize;
+                            }
+                            CursorSnap::Bottom => {
+                                self.buf_cursor.row = item_bottom.clamp(0, list_inner.height as i32 - 1) as usize;
+                            }
+                        }
+                        break;
+                    }
+                    if snap_y <= 0 {
+                        break;
+                    }
+                }
+            }
+        }
+
         let mut target_index = offset;
+        let mut last_processed_i = offset;
 
         for (i, &height) in line_counts.iter().enumerate().skip(offset) {
+            last_processed_i = i;
             let h = height as i32;
             current_y -= h;
             if (self.buf_cursor.row as i32) >= current_y {
@@ -1517,17 +1530,38 @@ impl Component for ChatWindow {
             }
         }
 
+        // If the viewport has empty space at the top and the cursor is inside it,
+        // snap the selection to the top-most (oldest) visible message.
+        if current_y > 0 && (self.buf_cursor.row as i32) < current_y {
+            target_index = last_processed_i;
+        }
+
         // The target_index is in the reversed list (newest=0).
-        let original_target_idx = item_count.saturating_sub(1).saturating_sub(target_index);
+        let raw_target_idx = item_count.saturating_sub(1).saturating_sub(target_index);
+        
+        // Cap the original_target_idx to message_list.len() - 1 so we never mathematically select
+        // the draft input box as a real message, which would trap the cursor.
+        let max_selectable_idx = self.message_list.len().saturating_sub(1);
+        let original_target_idx = raw_target_idx.min(max_selectable_idx);
 
         // If in Normal/Visual mode, sync the logical selection with the visual cursor
         let current_mode = self.app_context.current_mode();
-        if self.focused
-            && matches!(current_mode, Mode::Normal | Mode::Visual)
-            && self.message_list_state.selected() != Some(original_target_idx)
-        {
-            self.message_list_state.select(Some(original_target_idx));
-            self.app_context.mark_dirty();
+        let final_selection = if self.focused && matches!(current_mode, Mode::Normal | Mode::Visual) {
+            if self.message_list_state.selected() != Some(original_target_idx) {
+                self.message_list_state.select(Some(original_target_idx));
+                self.app_context.mark_dirty();
+            }
+            original_target_idx
+        } else {
+            // When not focused or not in Normal/Visual, read the current restored state
+            self.message_list_state.selected().unwrap_or(max_selectable_idx)
+        };
+
+        // Update the global scroll info for the status bar using the finalized definitive selection
+        if !self.message_list.is_empty() {
+            self.app_context.set_chat_scroll_info(Some((final_selection + 1, self.message_list.len())));
+        } else {
+            self.app_context.set_chat_scroll_info(None);
         }
 
         // ── Cache viewport height for key handler ──
@@ -1555,6 +1589,9 @@ impl Component for ChatWindow {
 
             frame.set_cursor_position((cursor_x, cursor_y));
         }
+
+        // ── Store actual rendered item count for bounds checking ──
+        self.rendered_item_count = item_count;
 
         Ok(())
     }

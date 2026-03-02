@@ -67,6 +67,22 @@ impl MessageEntry {
         }
     }
 
+    /// Creates a dummy MessageEntry used to render the local input draft directly
+    /// within the primary message list.
+    pub fn new_local_draft(sender_id: i64) -> Self {
+        Self {
+            id: i64::MAX,
+            sender_id: TdMessageSender::User(sender_id),
+            message_content: vec![Line::from("")],
+            content_type: MessageContentType::Text,
+            reply_to: None,
+            // 0 timestamp renders as 1970 usually, but custom draft rendering block 
+            // will bypass or ignore standard span drawing for the draft box
+            timestamp: DateTimeEntry { timestamp: 0 }, 
+            is_edited: false,
+        }
+    }
+
     pub fn id(&self) -> i64 {
         self.id
     }
