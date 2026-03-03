@@ -165,9 +165,9 @@ jobs:
       - name: Run cargo fmt
         run: cargo fmt --all -- --check
 
-      # - name: Upload artifact
-      #   uses: actions/upload-artifact@v4
-      #   with:
-      #     name: ${{ runner.os }}-artifact
-      #     path: ./
-      #     overwrite: true
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ runner.os }}-artifact
+          path: ./
+          overwrite: true
