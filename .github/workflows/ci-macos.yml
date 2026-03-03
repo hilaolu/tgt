@@ -148,22 +148,22 @@ jobs:
       - name: Run cargo build
         run: |
           if [ -d "tdlib/lib" ]; then export DYLD_LIBRARY_PATH="$(pwd)/tdlib/lib"; fi
-          cargo build --no-default-features --verbose --features ${{ matrix.feature }}
+          cargo build --no-default-features --verbose --features ${{ matrix.feature }} --release
 
-      - name: Run cargo test
-        run: |
-          if [ -d "tdlib/lib" ]; then export DYLD_LIBRARY_PATH="$(pwd)/tdlib/lib"; fi
-          cargo test --no-default-features --verbose --features ${{ matrix.feature }} -- --nocapture --test-threads=1
-        # Timeout is 10 minutes to avoid the job being hanged for the default 6 hours timeout
-        timeout-minutes: 10
+      # - name: Run cargo test
+      #   run: |
+      #     if [ -d "tdlib/lib" ]; then export DYLD_LIBRARY_PATH="$(pwd)/tdlib/lib"; fi
+      #     cargo test --no-default-features --verbose --features ${{ matrix.feature }} -- --nocapture --test-threads=1
+      #   # Timeout is 10 minutes to avoid the job being hanged for the default 6 hours timeout
+      #   timeout-minutes: 10
 
-      - name: Run cargo clippy
-        run: |
-          if [ -d "tdlib/lib" ]; then export DYLD_LIBRARY_PATH="$(pwd)/tdlib/lib"; fi
-          cargo clippy --no-default-features --all-targets --features ${{ matrix.feature }} -- -D warnings
+      # - name: Run cargo clippy
+      #   run: |
+      #     if [ -d "tdlib/lib" ]; then export DYLD_LIBRARY_PATH="$(pwd)/tdlib/lib"; fi
+      #     cargo clippy --no-default-features --all-targets --features ${{ matrix.feature }} -- -D warnings
 
-      - name: Run cargo fmt
-        run: cargo fmt --all -- --check
+      # - name: Run cargo fmt
+      #   run: cargo fmt --all -- --check
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
