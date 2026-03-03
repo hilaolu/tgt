@@ -102,6 +102,8 @@ pub struct AppContext {
     focused_component: AtomicU8,
     /// The modal state machine tracking current editor mode (Normal/Visual/Insert/Space/Picker).
     mode_state_machine: Mutex<ModeStateMachine>,
+    /// Information about the current chat scroll position: (selected_index + 1, total_messages).
+    chat_scroll_info: Mutex<Option<(usize, usize)>>,
 }
 /// Implementation of the `AppContext` struct.
 impl AppContext {
@@ -143,6 +145,7 @@ impl AppContext {
             cli_args: Mutex::new(cli_args),
             focused_component: AtomicU8::new(0), // 0 = None
             mode_state_machine: Mutex::new(ModeStateMachine::new()),
+            chat_scroll_info: Mutex::new(None),
         })
     }
     /// Get the application configuration.
@@ -374,6 +377,16 @@ impl AppContext {
     /// Clear the editor mode hint directly.
     pub fn clear_mode_hint(&self) {
         self.mode_state_machine.lock().unwrap().clear_hint();
+    }
+
+    /// Get the current chat scroll info (current index mapped to 1-based, total messages).
+    pub fn chat_scroll_info(&self) -> Option<(usize, usize)> {
+        *self.chat_scroll_info.lock().unwrap()
+    }
+
+    /// Set the current chat scroll info.
+    pub fn set_chat_scroll_info(&self, info: Option<(usize, usize)>) {
+        *self.chat_scroll_info.lock().unwrap() = info;
     }
 
     // ===== COMMON ======

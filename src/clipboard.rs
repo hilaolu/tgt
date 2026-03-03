@@ -17,10 +17,8 @@ pub fn set_clipboard_text(text: &str) -> bool {
     let osc52_payload = format!("\x1b]52;c;{}\x07", base64_encoded);
 
     let mut stdout = std::io::stdout();
-    if stdout.write_all(osc52_payload.as_bytes()).is_ok() {
-        if stdout.flush().is_ok() {
-            success = true;
-        }
+    if stdout.write_all(osc52_payload.as_bytes()).is_ok() && stdout.flush().is_ok() {
+        success = true;
     }
 
     success
