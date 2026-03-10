@@ -52,7 +52,7 @@ lazy_static = "1.5.0"
 ratatui = "0.30.0"
 serde = "1.0.228"
 toml = "1.0"
-tdlib-rs = "1.2.0"
+tdlib-rs = "1.3.0"
 tokio = { version = "1.49.0", features = ["full"] }
 tracing = "0.1.44"
 tracing-error = "0.2.1"
@@ -73,7 +73,7 @@ base64 = { version = "0.22.1", features = ["alloc"] }
 dirs = "6.0.0"
 reqwest = { version = "0.13.2", features = ["blocking"] }
 zip = { version = "8.1.0" }
-tdlib-rs = "1.2.0"
+tdlib-rs = "1.3.0"
 
 [dev-dependencies]
 tempfile = "3.25.0"
